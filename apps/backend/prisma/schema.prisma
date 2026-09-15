@@ -11,7 +11,6 @@ enum UserRole {
   SUPER_ADMIN
   BRANCH_MANAGER
   STAFF
-  TRAINER
 }
 
 enum MemberStatus {
@@ -73,7 +72,6 @@ model User {
 
   sessions       Session[]
   userBranches   UserBranch[]
-  trainerProfile TrainerProfile?
   createdLeads   Lead[]          @relation("LeadCreatedBy")
   updatedLeads   Lead[]          @relation("LeadUpdatedBy")
   crmActivities  CrmActivity[]
@@ -102,6 +100,7 @@ model Branch {
   payments      Payment[]
   crmActivities CrmActivity[]
   settings      GymSetting[]
+  trainers      Trainer[]
   workoutPlans  WorkoutPlan[]
 
   @@index([isActive])
@@ -268,17 +267,23 @@ model Lead {
   @@index([nextFollowUpAt])
 }
 
-model TrainerProfile {
+model Trainer {
   id         String   @id @default(cuid())
-  userId     String   @unique
+  branchId   String
+  fullName   String
+  email      String?
+  phone      String
   specialty  String?
   bio        String?
   hourlyRate Decimal? @db.Decimal(12, 2)
+  isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
 
+  @@index([branchId])
+  @@index([isActive])
   @@index([specialty])
 }
 

@@ -13,7 +13,7 @@ type Trainer = {
   status: "Đang hoạt động" | "Tạm nghỉ";
 };
 
-const emptyForm = { name: "", email: "", phone: "", specialty: "", password: "Trainer@123456" };
+const emptyForm = { name: "", email: "", phone: "", specialty: "" };
 
 export default function TrainersPage() {
   const [trainers, setTrainers] = useState<Trainer[]>([]);
@@ -53,7 +53,7 @@ export default function TrainersPage() {
 
   function openEdit(trainer: Trainer) {
     setEditing(trainer);
-    setForm({ name: trainer.name, email: trainer.email, phone: trainer.phone, specialty: trainer.specialty, password: "" });
+    setForm({ name: trainer.name, email: trainer.email, phone: trainer.phone, specialty: trainer.specialty, });
     setError("");
     setOpen(true);
   }
@@ -67,7 +67,7 @@ export default function TrainersPage() {
       const response = await fetch("/api/trainers", {
         method: editing ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editing ? { id: editing.id, ...form, password: undefined, status: editing.status } : form),
+        body: JSON.stringify(editing ? { id: editing.id, ...form, status: editing.status } : form),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "Không thể lưu Trainer.");
@@ -130,10 +130,10 @@ export default function TrainersPage() {
 
     {open && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4" onMouseDown={(event) => event.target === event.currentTarget && setOpen(false)}>
       <form onSubmit={save} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
-        <div className="mb-6 flex items-center justify-between"><div><h2 className="text-lg font-bold">{editing ? "Sửa Trainer" : "Thêm Trainer"}</h2><p className="mt-1 text-xs text-[var(--muted)]">{editing ? "Thay đổi sẽ được cập nhật vào PostgreSQL." : "Trainer mới sẽ được tạo tài khoản và lưu vào PostgreSQL."}</p></div><button type="button" className="btn btn-secondary !p-2" onClick={() => setOpen(false)}><X size={17} /></button></div>
+        <div className="mb-6 flex items-center justify-between"><div><h2 className="text-lg font-bold">{editing ? "Sửa Trainer" : "Thêm Trainer"}</h2><p className="mt-1 text-xs text-[var(--muted)]">{editing ? "Thay đổi sẽ được cập nhật vào PostgreSQL." : "PT mới sẽ được lưu trực tiếp vào PostgreSQL."}</p></div><button type="button" className="btn btn-secondary !p-2" onClick={() => setOpen(false)}><X size={17} /></button></div>
         <div className="grid gap-4 sm:grid-cols-2">
           {([['name','Họ và tên'],['email','Email'],['phone','Số điện thoại'],['specialty','Chuyên môn']] as const).map(([key, label]) => <label key={key} className="text-sm font-semibold">{label}<input required={key !== "specialty"} name={key} value={form[key]} onChange={(event) => setForm({ ...form, [key]: event.target.value })} className="field mt-2" /></label>)}
-          {!editing && <label className="text-sm font-semibold">Mật khẩu đăng nhập<input required minLength={8} type="password" name="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} className="field mt-2" /></label>}
+          
         </div>
         <div className="mt-6 flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Hủy</button><button disabled={saving} className="btn btn-primary" type="submit">{saving ? "Đang lưu..." : editing ? "Lưu thay đổi" : "Tạo Trainer"}</button></div>
       </form>

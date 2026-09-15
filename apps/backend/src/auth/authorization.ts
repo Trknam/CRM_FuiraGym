@@ -3,8 +3,10 @@ import { getCurrentUser } from "./session";
 import { getMainBranchId } from "../api/branches";
 export { ROLE_LABELS } from "./role-labels";
 import type { Request } from "express";
+import type { Permission } from "./permissions";
+import { hasPermission } from "./permissions";
 
-export type AppRole = "SUPER_ADMIN" | "BRANCH_MANAGER" | "STAFF" | "TRAINER";
+export type AppRole = "SUPER_ADMIN" | "BRANCH_MANAGER" | "STAFF";
 
 export class AuthError extends Error {
   constructor(public readonly status: 401 | 403, message: "UNAUTHORIZED" | "FORBIDDEN") {
@@ -25,14 +27,13 @@ export async function requireRole(req: Request, ...roles: AppRole[]) {
   return user;
 }
 
-export async function requirePermission(req: Request, permission: import("./permissions").Permission) {
+export async function requirePermission(req: Request, permission: Permission) {
   const user = await requireUser(req);
-  const { hasPermission } = await import("./permissions");
   if (!hasPermission(user.role as AppRole, permission)) throw new AuthError(403, "FORBIDDEN");
   return user;
 }
 
-/** Single-location application: all users operate on the one main gym location. */
+/** Ứng dụng hiện tại chỉ vận hành một cơ sở; branch vẫn giữ trong DB để không phá kiến trúc dữ liệu. */
 export async function getAccessibleBranchIds(_req: Request): Promise<string[]> {
   return [await getMainBranchId()];
 }

@@ -110,23 +110,10 @@ async function main() {
     create: { id: "seed-checkin-2", branchId: branch.id, memberId: member2.id, checkedInAt: new Date(now.setHours(8, 15, 0, 0)), method: "QR_CODE", status: "VALID" },
   });
 
-  const trainerPasswordHash = await bcrypt.hash("Trainer@123456", 12);
-  const trainer = await prisma.user.upsert({
-    where: { email: "trainer@gymcrm.local" },
-    update: { fullName: "Nguyễn Hoàng Nam", role: "TRAINER", isActive: true, passwordHash: trainerPasswordHash },
-    create: { email: "trainer@gymcrm.local", fullName: "Nguyễn Hoàng Nam", role: "TRAINER", isActive: true, passwordHash: trainerPasswordHash },
-  });
-
-  await prisma.userBranch.upsert({
-    where: { userId_branchId: { userId: trainer.id, branchId: branch.id } },
-    update: {},
-    create: { userId: trainer.id, branchId: branch.id },
-  });
-
-  await prisma.trainerProfile.upsert({
-    where: { userId: trainer.id },
-    update: { specialty: "Strength & Hypertrophy", hourlyRate: 300000 },
-    create: { userId: trainer.id, specialty: "Strength & Hypertrophy", hourlyRate: 300000 },
+  await prisma.trainer.upsert({
+    where: { id: "seed-trainer-1" },
+    update: { branchId: branch.id, fullName: "Nguyễn Hoàng Nam", email: "trainer@gymcrm.local", phone: "0909999999", specialty: "Strength & Hypertrophy", hourlyRate: 300000, isActive: true },
+    create: { id: "seed-trainer-1", branchId: branch.id, fullName: "Nguyễn Hoàng Nam", email: "trainer@gymcrm.local", phone: "0909999999", specialty: "Strength & Hypertrophy", hourlyRate: 300000, isActive: true },
   });
 
   await prisma.lead.upsert({
@@ -176,7 +163,7 @@ async function main() {
   });
 
   console.log("Đã tạo/cập nhật dữ liệu mẫu cho Dashboard:");
-  console.log("- 1 chi nhánh, 1 SUPER_ADMIN, 1 TRAINER");
+  console.log("- 1 cơ sở, 1 SUPER_ADMIN, 1 PT (không phải tài khoản đăng nhập)");
   console.log("- 3 hội viên, 3 membership");
   console.log("- 2 thanh toán, 2 check-in, 2 lead");
 }

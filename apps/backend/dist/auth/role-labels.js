@@ -6,7 +6,6 @@ exports.ROLE_LABELS = {
     SUPER_ADMIN: "Quản trị hệ thống",
     BRANCH_MANAGER: "Quản lý chi nhánh",
     STAFF: "Nhân viên",
-    TRAINER: "Huấn luyện viên",
 };
 function getRoleLabel(role) {
     return exports.ROLE_LABELS[role] ?? "Người dùng";

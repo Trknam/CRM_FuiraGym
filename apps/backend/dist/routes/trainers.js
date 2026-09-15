@@ -4,91 +4,139 @@ exports.trainersRoutes = void 0;
 const express_1 = require("express");
 const prisma_1 = require("../db/prisma");
 const authorization_1 = require("../auth/authorization");
-const password_1 = require("../auth/password");
 const valkey_1 = require("../cache/valkey");
 const keys_1 = require("../cache/keys");
 const branches_1 = require("../api/branches");
-const out = (u) => ({ id: u.id, name: u.fullName, email: u.email ?? "", phone: u.phone ?? "", specialty: u.trainerProfile?.specialty ?? "", status: u.isActive ? "Đang hoạt động" : "Tạm nghỉ" });
 exports.trainersRoutes = (0, express_1.Router)();
-async function filter(req) { const ids = await (0, authorization_1.getAccessibleBranchIds)(req); return ids === null ? {} : { userBranches: { some: { branchId: { in: ids } } } }; }
-exports.trainersRoutes.get("/", async (req, res) => { try {
-    await (0, authorization_1.requirePermission)(req, "trainer.read");
-    const ids = await (0, authorization_1.getAccessibleBranchIds)(req);
-    const rows = await prisma_1.prisma.user.findMany({ where: { role: "TRAINER", userBranches: { some: { branchId: { in: ids } } } }, orderBy: { createdAt: "desc" }, include: { trainerProfile: true } });
-    return res.json({ data: rows.map(out), cached: false });
+function mapTrainer(trainer) {
+    return {
+        id: trainer.id,
+        name: trainer.fullName,
+        email: trainer.email ?? "",
+        phone: trainer.phone,
+        specialty: trainer.specialty ?? "",
+        bio: trainer.bio ?? "",
+        hourlyRate: trainer.hourlyRate == null ? "" : String(trainer.hourlyRate),
+        status: trainer.isActive ? "Đang hoạt động" : "Tạm nghỉ",
+    };
 }
-catch (error) {
-    const s = error?.status;
-    if (s)
-        return res.status(s).json({ message: error.message });
-    return res.status(500).json({ message: "Không thể lấy danh sách PT / Trainer." });
-} });
-exports.trainersRoutes.post("/", async (req, res) => { try {
-    await (0, authorization_1.requirePermission)(req, "trainer.create");
-    const ids = await (0, authorization_1.getAccessibleBranchIds)(req), b = req.body ?? {}, name = String(b.name ?? "").trim(), email = String(b.email ?? "").trim().toLowerCase(), phone = String(b.phone ?? "").trim(), password = String(b.password ?? "");
-    if (!name || !phone || !email || password.length < 8)
-        return res.status(400).json({ message: "Họ tên, email, số điện thoại và mật khẩu ít nhất 8 ký tự là bắt buộc." });
-    if (!/^\S+@\S+\.\S+$/.test(email))
-        return res.status(400).json({ message: "Email Trainer không hợp lệ." });
-    if (!/^\d{9,11}$/.test(phone.replace(/\s+/g, "")))
-        return res.status(400).json({ message: "Số điện thoại Trainer không hợp lệ." });
-    const branchId = await (0, branches_1.defaultBranchId)(req);
-    if (!branchId)
-        return res.status(400).json({ message: "Chưa có chi nhánh để gán Trainer." });
-    if (ids !== null && !ids.includes(branchId))
-        return res.status(403).json({ message: "Bạn không có quyền tạo Trainer tại chi nhánh này." });
-    const duplicate = await prisma_1.prisma.user.findFirst({ where: { OR: [{ email }, { phone }] } });
-    if (duplicate)
-        return res.status(409).json({ message: "Email hoặc số điện thoại đã tồn tại." });
-    const u = await prisma_1.prisma.user.create({ data: { fullName: name, email, phone, passwordHash: await (0, password_1.hashPassword)(password), role: "TRAINER", isActive: true, userBranches: { create: { branchId } }, trainerProfile: { create: { specialty: String(b.specialty ?? "").trim() || null } } }, include: { trainerProfile: true } });
-    await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.trainers("all"));
-    return res.status(201).json({ data: out(u) });
+function normalizePhone(value) {
+    return String(value ?? "").replace(/\s+/g, "").trim();
 }
-catch (error) {
-    const s = error?.status;
-    if (s)
-        return res.status(s).json({ message: error.message });
-    console.error("[trainers] create failed", error);
-    return res.status(500).json({ message: "Không thể tạo PT / Trainer." });
-} });
-exports.trainersRoutes.patch("/", async (req, res) => { try {
-    await (0, authorization_1.requirePermission)(req, "trainer.update");
-    const ids = await (0, authorization_1.getAccessibleBranchIds)(req), b = req.body ?? {}, id = String(b.id ?? "");
-    const u = await prisma_1.prisma.user.findFirst({ where: { id, role: "TRAINER", ...(ids === null ? {} : { userBranches: { some: { branchId: { in: ids } } } }) }, include: { trainerProfile: true } });
-    if (!u)
-        return res.status(404).json({ message: "Không tìm thấy Trainer hoặc bạn không có quyền." });
-    const email = String(b.email ?? u.email ?? "").trim().toLowerCase(), phone = String(b.phone ?? u.phone ?? "").trim();
-    if (!email || !/^\S+@\S+\.\S+$/.test(email))
-        return res.status(400).json({ message: "Email Trainer không hợp lệ." });
-    if (!phone || !/^\d{9,11}$/.test(phone.replace(/\s+/g, "")))
-        return res.status(400).json({ message: "Số điện thoại Trainer không hợp lệ." });
-    const dup = await prisma_1.prisma.user.findFirst({ where: { id: { not: id }, OR: [{ email }, { phone }] } });
-    if (dup)
-        return res.status(409).json({ message: "Email hoặc số điện thoại đã được sử dụng." });
-    const updated = await prisma_1.prisma.user.update({ where: { id }, data: { fullName: String(b.name ?? u.fullName).trim(), email, phone, isActive: b.status === undefined ? u.isActive : b.status === "Đang hoạt động", trainerProfile: { upsert: { create: { specialty: String(b.specialty ?? "").trim() || null }, update: { specialty: String(b.specialty ?? u.trainerProfile?.specialty ?? "").trim() || null } } } }, include: { trainerProfile: true } });
-    await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.trainers("all"));
-    return res.json({ data: out(updated) });
+async function trainerInScope(id, branchId) {
+    return prisma_1.prisma.trainer.findFirst({ where: { id, branchId } });
 }
-catch (error) {
-    const s = error?.status;
-    if (s)
-        return res.status(s).json({ message: error.message });
-    console.error("[trainers] update failed", error);
-    return res.status(500).json({ message: "Không thể cập nhật PT / Trainer." });
-} });
-exports.trainersRoutes.delete("/", async (req, res) => { try {
-    await (0, authorization_1.requirePermission)(req, "trainer.delete");
-    const ids = await (0, authorization_1.getAccessibleBranchIds)(req), id = String(req.body?.id ?? ""), u = await prisma_1.prisma.user.findFirst({ where: { id, role: "TRAINER", ...(ids === null ? {} : { userBranches: { some: { branchId: { in: ids } } } }) }, select: { id: true } });
-    if (!u)
-        return res.status(404).json({ message: "Không tìm thấy Trainer hoặc bạn không có quyền." });
-    await prisma_1.prisma.user.update({ where: { id }, data: { isActive: false } });
-    await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.trainers("all"));
-    return res.json({ message: "Đã ngừng hoạt động Trainer." });
-}
-catch (error) {
-    const s = error?.status;
-    if (s)
-        return res.status(s).json({ message: error.message });
-    console.error("[trainers] delete failed", error);
-    return res.status(500).json({ message: "Không thể xóa Trainer." });
-} });
+exports.trainersRoutes.get("/", async (req, res) => {
+    try {
+        await (0, authorization_1.requirePermission)(req, "trainer.read");
+        const branchId = await (0, branches_1.defaultBranchId)(req);
+        const rows = await prisma_1.prisma.trainer.findMany({ where: { branchId }, orderBy: { createdAt: "desc" } });
+        return res.json({ data: rows.map(mapTrainer), cached: false });
+    }
+    catch (error) {
+        const status = error?.status;
+        if (status)
+            return res.status(status).json({ message: error.message });
+        console.error("[trainers] list failed", error);
+        return res.status(500).json({ message: "Không thể lấy danh sách PT / Trainer." });
+    }
+});
+exports.trainersRoutes.post("/", async (req, res) => {
+    try {
+        await (0, authorization_1.requirePermission)(req, "trainer.create");
+        const body = req.body ?? {};
+        const branchId = await (0, branches_1.defaultBranchId)(req);
+        if (!branchId)
+            return res.status(400).json({ message: "Chưa có cơ sở để tạo PT." });
+        const name = String(body.name ?? "").trim();
+        const email = String(body.email ?? "").trim().toLowerCase() || null;
+        const phone = normalizePhone(body.phone);
+        const specialty = String(body.specialty ?? "").trim() || null;
+        const bio = String(body.bio ?? "").trim() || null;
+        const hourlyRate = body.hourlyRate === undefined || body.hourlyRate === "" ? null : Number(body.hourlyRate);
+        if (!name || !phone)
+            return res.status(400).json({ message: "Họ tên và số điện thoại là bắt buộc." });
+        if (!/^\d{9,11}$/.test(phone))
+            return res.status(400).json({ message: "Số điện thoại PT không hợp lệ." });
+        if (email && !/^\S+@\S+\.\S+$/.test(email))
+            return res.status(400).json({ message: "Email PT không hợp lệ." });
+        if (hourlyRate !== null && (!Number.isFinite(hourlyRate) || hourlyRate < 0))
+            return res.status(400).json({ message: "Mức phí PT không hợp lệ." });
+        const duplicate = await prisma_1.prisma.trainer.findFirst({ where: { branchId, OR: [{ phone }, ...(email ? [{ email }] : [])] }, select: { id: true } });
+        if (duplicate)
+            return res.status(409).json({ message: "Email hoặc số điện thoại PT đã tồn tại." });
+        const trainer = await prisma_1.prisma.trainer.create({ data: { branchId, fullName: name, email, phone, specialty, bio, hourlyRate: hourlyRate === null ? undefined : hourlyRate } });
+        await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.trainers("all"));
+        return res.status(201).json({ data: mapTrainer(trainer) });
+    }
+    catch (error) {
+        const status = error?.status;
+        if (status)
+            return res.status(status).json({ message: error.message });
+        console.error("[trainers] create failed", error);
+        return res.status(500).json({ message: "Không thể tạo PT / Trainer." });
+    }
+});
+exports.trainersRoutes.patch("/", async (req, res) => {
+    try {
+        await (0, authorization_1.requirePermission)(req, "trainer.update");
+        const body = req.body ?? {};
+        const id = String(body.id ?? "").trim();
+        const branchId = await (0, branches_1.defaultBranchId)(req);
+        if (!id)
+            return res.status(400).json({ message: "Thiếu mã PT." });
+        const existing = await trainerInScope(id, branchId);
+        if (!existing)
+            return res.status(404).json({ message: "Không tìm thấy PT." });
+        const name = String(body.name ?? existing.fullName).trim();
+        const email = body.email === undefined ? existing.email : String(body.email ?? "").trim().toLowerCase() || null;
+        const phone = normalizePhone(body.phone === undefined ? existing.phone : body.phone);
+        const specialty = body.specialty === undefined ? existing.specialty : String(body.specialty ?? "").trim() || null;
+        const bio = body.bio === undefined ? existing.bio : String(body.bio ?? "").trim() || null;
+        const hourlyRate = body.hourlyRate === undefined || body.hourlyRate === "" ? existing.hourlyRate : Number(body.hourlyRate);
+        const isActive = body.status === undefined ? existing.isActive : body.status === "Đang hoạt động";
+        if (!name || !phone)
+            return res.status(400).json({ message: "Họ tên và số điện thoại là bắt buộc." });
+        if (!/^\d{9,11}$/.test(phone))
+            return res.status(400).json({ message: "Số điện thoại PT không hợp lệ." });
+        if (email && !/^\S+@\S+\.\S+$/.test(email))
+            return res.status(400).json({ message: "Email PT không hợp lệ." });
+        if (hourlyRate !== null && (!Number.isFinite(Number(hourlyRate)) || Number(hourlyRate) < 0))
+            return res.status(400).json({ message: "Mức phí PT không hợp lệ." });
+        const duplicate = await prisma_1.prisma.trainer.findFirst({ where: { branchId, id: { not: id }, OR: [{ phone }, ...(email ? [{ email }] : [])] }, select: { id: true } });
+        if (duplicate)
+            return res.status(409).json({ message: "Email hoặc số điện thoại PT đã được sử dụng." });
+        const updated = await prisma_1.prisma.trainer.update({ where: { id }, data: { fullName: name, email, phone, specialty, bio, hourlyRate, isActive } });
+        await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.trainers("all"));
+        return res.json({ data: mapTrainer(updated) });
+    }
+    catch (error) {
+        const status = error?.status;
+        if (status)
+            return res.status(status).json({ message: error.message });
+        console.error("[trainers] update failed", error);
+        return res.status(500).json({ message: "Không thể cập nhật PT / Trainer." });
+    }
+});
+exports.trainersRoutes.delete("/", async (req, res) => {
+    try {
+        await (0, authorization_1.requirePermission)(req, "trainer.delete");
+        const id = String(req.body?.id ?? req.query?.id ?? "").trim();
+        const branchId = await (0, branches_1.defaultBranchId)(req);
+        if (!id)
+            return res.status(400).json({ message: "Thiếu mã PT." });
+        const existing = await trainerInScope(id, branchId);
+        if (!existing)
+            return res.status(404).json({ message: "Không tìm thấy PT." });
+        await prisma_1.prisma.trainer.update({ where: { id }, data: { isActive: false } });
+        await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.trainers("all"));
+        return res.json({ message: "Đã chuyển PT sang trạng thái Tạm nghỉ." });
+    }
+    catch (error) {
+        const status = error?.status;
+        if (status)
+            return res.status(status).json({ message: error.message });
+        console.error("[trainers] delete failed", error);
+        return res.status(500).json({ message: "Không thể cập nhật PT." });
+    }
+});
