@@ -18,7 +18,7 @@ function mapMember(member) {
         email: member.email ?? "",
         packageId: membership?.packageId ?? "",
         package: membership?.package?.name ?? "Chưa có gói",
-        status: membership?.status === "ACTIVE" ? "Đang hoạt động" : membership?.status === "EXPIRED" ? "Hết hạn" : member.status === "ACTIVE" ? "Đang hoạt động" : "Tạm nghỉ",
+        status: member.status === "ACTIVE" ? "Đang hoạt động" : member.status === "BLOCKED" ? "Bị khóa" : "Tạm nghỉ",
         memberStatus: member.status === "ACTIVE" ? "Đang hoạt động" : member.status === "BLOCKED" ? "Bị khóa" : "Tạm nghỉ",
         membershipStatus: membership?.status === "ACTIVE" ? "Đang hoạt động" : membership?.status === "EXPIRED" ? "Hết hạn" : membership?.status === "CANCELLED" ? "Đã hủy" : "",
         startDate: membership?.startDate?.toISOString().slice(0, 10) ?? "",
@@ -52,8 +52,8 @@ function parseDate(value, fallback) {
     const date = new Date(String(value));
     return Number.isNaN(date.getTime()) ? null : date;
 }
-async function invalidate() {
-    await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.members("all"));
+async function invalidate(branchId) {
+    await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.members(branchId));
 }
 exports.membersRoutes.get("/", async (req, res) => {
     try {
@@ -112,7 +112,7 @@ exports.membersRoutes.post("/", async (req, res) => {
             }
             return tx.member.findUniqueOrThrow({ where: { id: created.id }, include: { memberships: { orderBy: { endDate: "desc" }, take: 1, include: { package: true } } } });
         });
-        await invalidate();
+        await invalidate(branchId);
         return res.status(201).json({ data: mapMember(member) });
     }
     catch (error) {
@@ -147,37 +147,43 @@ exports.membersRoutes.patch("/", async (req, res) => {
         const duplicate = await prisma_1.prisma.member.findFirst({ where: { phone, branchId, id: { not: id } }, select: { id: true } });
         if (duplicate)
             return res.status(409).json({ message: "Số điện thoại hội viên đã tồn tại." });
-        await prisma_1.prisma.member.update({ where: { id }, data: { fullName, phone, email, dateOfBirth: parseDate(body.dateOfBirth, existing.dateOfBirth), address: body.address === undefined ? existing.address : String(body.address).trim() || null, status: memberStatus(body.memberStatus, existing.status) } });
-        const packageId = String(body.packageId ?? "").trim();
-        const currentMembership = existing.memberships[0];
-        if (packageId && packageId !== currentMembership?.packageId) {
-            const pkg = await prisma_1.prisma.gymPackage.findFirst({ where: { id: packageId, branchId, status: "ACTIVE" } });
-            if (!pkg)
-                return res.status(400).json({ message: "Gói tập không hợp lệ hoặc đã ngừng bán." });
-            const startDate = parseDate(body.startDate, new Date()) ?? new Date();
-            const endDate = parseDate(body.endDate) ?? new Date(startDate.getTime() + pkg.durationDays * 24 * 60 * 60 * 1000);
-            if (endDate <= startDate)
-                return res.status(400).json({ message: "Ngày bắt đầu và ngày hết hạn không hợp lệ." });
-            if (currentMembership)
-                await prisma_1.prisma.membership.update({ where: { id: currentMembership.id }, data: { packageId: pkg.id, startDate, endDate, price: pkg.price, status: membershipStatus(body.membershipStatus, "ACTIVE") } });
-            else
-                await prisma_1.prisma.membership.create({ data: { memberId: id, packageId: pkg.id, startDate, endDate, price: pkg.price, status: membershipStatus(body.membershipStatus, "ACTIVE") } });
-        }
-        else if (currentMembership) {
-            const startDate = parseDate(body.startDate, currentMembership.startDate) ?? currentMembership.startDate;
-            const endDate = parseDate(body.endDate, currentMembership.endDate) ?? currentMembership.endDate;
-            if (endDate <= startDate)
-                return res.status(400).json({ message: "Ngày bắt đầu và ngày hết hạn không hợp lệ." });
-            await prisma_1.prisma.membership.update({ where: { id: currentMembership.id }, data: { startDate, endDate, status: membershipStatus(body.membershipStatus, currentMembership.status) } });
-        }
-        const updated = await prisma_1.prisma.member.findUniqueOrThrow({ where: { id }, include: { memberships: { orderBy: { endDate: "desc" }, take: 1, include: { package: true } } } });
-        await invalidate();
+        const updated = await prisma_1.prisma.$transaction(async (tx) => {
+            await tx.member.update({ where: { id }, data: { fullName, phone, email, dateOfBirth: parseDate(body.dateOfBirth, existing.dateOfBirth), address: body.address === undefined ? existing.address : String(body.address).trim() || null, status: memberStatus(body.memberStatus, existing.status) } });
+            const packageId = String(body.packageId ?? "").trim();
+            const currentMembership = existing.memberships[0];
+            if (packageId && packageId !== currentMembership?.packageId) {
+                const pkg = await tx.gymPackage.findFirst({ where: { id: packageId, branchId, status: "ACTIVE" } });
+                if (!pkg)
+                    throw new Error("INVALID_PACKAGE");
+                const startDate = parseDate(body.startDate, new Date()) ?? new Date();
+                const endDate = parseDate(body.endDate) ?? new Date(startDate.getTime() + pkg.durationDays * 24 * 60 * 60 * 1000);
+                if (endDate <= startDate)
+                    throw new Error("INVALID_MEMBERSHIP_DATES");
+                if (currentMembership)
+                    await tx.membership.update({ where: { id: currentMembership.id }, data: { packageId: pkg.id, startDate, endDate, price: pkg.price, status: membershipStatus(body.membershipStatus, "ACTIVE") } });
+                else
+                    await tx.membership.create({ data: { memberId: id, packageId: pkg.id, startDate, endDate, price: pkg.price, status: membershipStatus(body.membershipStatus, "ACTIVE") } });
+            }
+            else if (currentMembership) {
+                const startDate = parseDate(body.startDate, currentMembership.startDate) ?? currentMembership.startDate;
+                const endDate = parseDate(body.endDate, currentMembership.endDate) ?? currentMembership.endDate;
+                if (endDate <= startDate)
+                    throw new Error("INVALID_MEMBERSHIP_DATES");
+                await tx.membership.update({ where: { id: currentMembership.id }, data: { startDate, endDate, status: membershipStatus(body.membershipStatus, currentMembership.status) } });
+            }
+            return tx.member.findUniqueOrThrow({ where: { id }, include: { memberships: { orderBy: { endDate: "desc" }, take: 1, include: { package: true } } } });
+        });
+        await invalidate(branchId);
         return res.json({ data: mapMember(updated) });
     }
     catch (error) {
         console.error("[members] update failed", error);
         if (error instanceof Error && "status" in error)
             return res.status(Number(error.status)).json({ message: error.message });
+        if (error instanceof Error && error.message === "INVALID_PACKAGE")
+            return res.status(400).json({ message: "Gói tập không hợp lệ hoặc đã ngừng bán." });
+        if (error instanceof Error && error.message === "INVALID_MEMBERSHIP_DATES")
+            return res.status(400).json({ message: "Ngày bắt đầu và ngày hết hạn không hợp lệ." });
         return res.status(500).json({ message: "Không thể cập nhật hội viên." });
     }
 });
@@ -190,7 +196,7 @@ exports.membersRoutes.delete("/", async (req, res) => {
         if (!existing)
             return res.status(404).json({ message: "Không tìm thấy hội viên." });
         await prisma_1.prisma.member.update({ where: { id }, data: { status: "INACTIVE" } });
-        await invalidate();
+        await invalidate(branchId);
         return res.json({ message: "Đã ngừng hoạt động hội viên." });
     }
     catch (error) {

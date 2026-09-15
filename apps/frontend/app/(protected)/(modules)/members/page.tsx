@@ -12,5 +12,5 @@ export default function MembersPage() {
     {key:"membershipStatus",label:"Trạng thái gói",type:"select",options:["Đang hoạt động","Hết hạn","Đã hủy"]},
     {key:"startDate",label:"Ngày bắt đầu",type:"date"},
     {key:"endDate",label:"Ngày hết hạn",type:"date"}
-  ]} columns={["name","phone","package","status","expiry"]} seed={[]}/>;
+  ]} columns={["memberCode","name","phone","package","membershipStatus","memberStatus","endDate"]} columnLabels={{memberCode:"Mã hội viên",package:"Gói tập",membershipStatus:"Trạng thái gói",memberStatus:"Trạng thái hội viên",endDate:"Ngày hết hạn"}} seed={[]}/>;
 }

@@ -16,6 +16,7 @@ export default function LeadsPage() {
       { key: "note", label: "Ghi chú" },
     ]}
     columns={["name", "phone", "email", "source", "status", "nextFollowUpAt", "note"]}
+    columnLabels={{ name: "Họ và tên", phone: "Số điện thoại", email: "Email", source: "Nguồn", status: "Trạng thái", nextFollowUpAt: "Ngày follow-up", note: "Ghi chú" }}
     seed={[]}
   />;
 }

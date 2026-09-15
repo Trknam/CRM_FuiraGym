@@ -7,6 +7,13 @@ import { PageTitle } from "@/components/ui/page-title";
 export type Field = { key: string; label: string; type?: "text" | "number" | "date" | "datetime-local" | "select"; options?: string[]; optionsEndpoint?: string; required?: boolean };
 export type CrudItem = Record<string, string | number> & { id: string };
 
+const displayFieldValue = (item: CrudItem, key: string) => {
+  const value = item[key];
+  if (value !== undefined && value !== null && String(value).trim() !== "") return String(value);
+  if (key === "membershipStatus") return "Chưa có gói";
+  return "—";
+};
+
 type Props = {
   title: string;
   description: string;
@@ -15,6 +22,7 @@ type Props = {
   fields: Field[];
   seed: CrudItem[];
   columns: string[];
+  columnLabels?: Record<string, string>;
   readOnly?: boolean;
 };
 
@@ -33,7 +41,21 @@ const statusTone = (value: string) => {
   return "badge badge-neutral";
 };
 
-export function CrudModulePage({ title, description, action, moduleKey, fields, seed, columns, readOnly = false }: Props) {
+const displayValue = (field: Field | undefined, value: unknown) => {
+  const text = String(value ?? "—");
+  if (!field || !text || text === "—") return text || "—";
+  if (field.type === "date") {
+    const date = new Date(text);
+    return Number.isNaN(date.getTime()) ? text : date.toLocaleDateString("vi-VN");
+  }
+  if (field.type === "datetime-local") {
+    const date = new Date(text);
+    return Number.isNaN(date.getTime()) ? text : date.toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
+  }
+  return text;
+};
+
+export function CrudModulePage({ title, description, action, moduleKey, fields, seed, columns, columnLabels = {}, readOnly = false }: Props) {
   const [items, setItems] = useState<CrudItem[]>([]);
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<CrudItem | null>(null);
@@ -151,8 +173,8 @@ export function CrudModulePage({ title, description, action, moduleKey, fields, 
         </div>
         <div className="overflow-x-auto">
           {loading ? <div className="p-12 text-center text-sm text-[var(--muted)]">Đang tải dữ liệu từ PostgreSQL...</div> : <table className="w-full min-w-[760px] text-left text-sm">
-            <thead className="bg-[var(--surface-subtle)] text-xs font-semibold text-[var(--muted)]"><tr>{columns.map((key) => <th key={key} className="px-5 py-3">{fields.find((f) => f.key === key)?.label ?? key}</th>)}{!readOnly && <th className="px-5 py-3 text-right">Thao tác</th>}</tr></thead>
-            <tbody>{filtered.map((item) => <tr className="table-row" key={item.id}>{columns.map((key, index) => { const value = String(item[key] ?? "—"); return <td key={key} className="px-5 py-3">{index === 0 ? <span className="font-semibold">{value}</span> : fields.find((f) => f.key === key)?.options ? <span className={statusTone(value)}>{value}</span> : value}</td>; })}{!readOnly && <td className="px-5 py-3"><div className="flex justify-end gap-1"><button aria-label="Sửa" className="btn btn-secondary !p-2" onClick={() => openEdit(item)}><Pencil size={15}/></button><button aria-label="Xóa" className="btn btn-danger !p-2" onClick={() => remove(item.id)}><Trash2 size={15}/></button></div></td>}</tr>)}</tbody>
+            <thead className="bg-[var(--surface-subtle)] text-xs font-semibold text-[var(--muted)]"><tr>{columns.map((key) => <th key={key} className="px-5 py-3">{columnLabels[key] ?? fields.find((f) => f.key === key)?.label ?? key}</th>)}{!readOnly && <th className="px-5 py-3 text-right">Thao tác</th>}</tr></thead>
+            <tbody>{filtered.map((item) => <tr className="table-row" key={item.id}>{columns.map((key, index) => { const field = fields.find((f) => f.key === key); const rawValue = displayFieldValue(item, key); const value = displayValue(field, rawValue); return <td key={key} className="px-5 py-3">{index === 0 ? <span className="font-semibold">{value}</span> : field?.options || field?.optionsEndpoint ? <span className={statusTone(value)}>{value}</span> : value}</td>; })}{!readOnly && <td className="px-5 py-3"><div className="flex justify-end gap-1"><button aria-label="Sửa" className="btn btn-secondary !p-2" onClick={() => openEdit(item)}><Pencil size={15}/></button><button aria-label="Xóa" className="btn btn-danger !p-2" onClick={() => remove(item.id)}><Trash2 size={15}/></button></div></td>}</tr>)}</tbody>
           </table>}
           {!loading && filtered.length === 0 && <div className="p-12 text-center text-sm text-[var(--muted)]">Không có dữ liệu.</div>}
         </div>

@@ -48,8 +48,8 @@ function parseDate(value: unknown, fallback?: Date | null) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-async function invalidate() {
-  await cacheDelete(cacheKeys.members("all"));
+async function invalidate(branchId: string) {
+  await cacheDelete(cacheKeys.members(branchId));
 }
 
 membersRoutes.get("/", async (req, res) => {
@@ -102,7 +102,7 @@ membersRoutes.post("/", async (req, res) => {
       }
       return tx.member.findUniqueOrThrow({ where: { id: created.id }, include: { memberships: { orderBy: { endDate: "desc" }, take: 1, include: { package: true } } } });
     });
-    await invalidate();
+    await invalidate(branchId);
     return res.status(201).json({ data: mapMember(member) });
   } catch (error) {
     console.error("[members] create failed", error);
@@ -149,7 +149,7 @@ membersRoutes.patch("/", async (req, res) => {
       }
       return tx.member.findUniqueOrThrow({ where: { id }, include: { memberships: { orderBy: { endDate: "desc" }, take: 1, include: { package: true } } } });
     });
-    await invalidate();
+    await invalidate(branchId);
     return res.json({ data: mapMember(updated) });
   } catch (error) {
     console.error("[members] update failed", error);
@@ -168,7 +168,7 @@ membersRoutes.delete("/", async (req, res) => {
     const existing = await prisma.member.findFirst({ where: { id, branchId }, select: { id: true } });
     if (!existing) return res.status(404).json({ message: "Không tìm thấy hội viên." });
     await prisma.member.update({ where: { id }, data: { status: "INACTIVE" } });
-    await invalidate();
+    await invalidate(branchId);
     return res.json({ message: "Đã ngừng hoạt động hội viên." });
   } catch (error) {
     console.error("[members] delete failed", error);
