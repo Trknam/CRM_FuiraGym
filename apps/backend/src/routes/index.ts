@@ -12,6 +12,7 @@ import { settingsRoutes } from "./settings";
 import { reportsRoutes } from "./reports";
 import { workoutsRoutes } from "./workouts";
 import { dashboardRoutes } from "./dashboard";
+import { usersRoutes } from "./users";
 import { prisma } from "../db/prisma";
 import { requireUser } from "../auth/authorization";
 import { getMainBranchId } from "../api/branches";
@@ -45,4 +46,5 @@ export function registerApiRoutes(app: Express) {
   app.use("/api/reports", reportsRoutes);
   app.use("/api/workouts", workoutsRoutes);
   app.use("/api/dashboard", dashboardRoutes);
+  app.use("/api/users", usersRoutes);
 }

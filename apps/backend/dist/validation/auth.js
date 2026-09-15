@@ -15,12 +15,8 @@ function normalizePhone(value) {
         return `0${digits.slice(2)}`;
     return digits;
 }
-function isEmail(value) {
-    return EMAIL_REGEX.test(value.trim().toLowerCase());
-}
-function isVietnamPhone(value) {
-    return VIETNAM_PHONE_REGEX.test(normalizePhone(value));
-}
+function isEmail(value) { return EMAIL_REGEX.test(value.trim().toLowerCase()); }
+function isVietnamPhone(value) { return VIETNAM_PHONE_REGEX.test(normalizePhone(value)); }
 function validatePassword(password) {
     if (password.length < 8)
         return "Mật khẩu phải có ít nhất 8 ký tự.";
@@ -40,17 +36,14 @@ function validateRegister(input) {
     const identifier = input.identifier.trim();
     if (fullName.length < 2)
         errors.fullName = "Vui lòng nhập họ và tên hợp lệ.";
-    if (!identifier) {
+    if (!identifier)
         errors.identifier = "Vui lòng nhập email hoặc số điện thoại.";
-    }
-    else if (!isEmail(identifier) && !isVietnamPhone(identifier)) {
+    else if (!isEmail(identifier) && !isVietnamPhone(identifier))
         errors.identifier = "Email hoặc số điện thoại không đúng định dạng.";
-    }
     const passwordError = validatePassword(input.password);
     if (passwordError)
         errors.password = passwordError;
-    if (input.confirmPassword !== input.password) {
+    if (input.confirmPassword !== input.password)
         errors.confirmPassword = "Mật khẩu nhập lại không khớp.";
-    }
     return errors;
 }

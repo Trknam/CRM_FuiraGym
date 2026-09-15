@@ -6,6 +6,7 @@ const prisma_1 = require("../db/prisma");
 const password_1 = require("../auth/password");
 const auth_1 = require("../validation/auth");
 const session_1 = require("../auth/session");
+const permissions_1 = require("../auth/permissions");
 exports.authRoutes = (0, express_1.Router)();
 exports.authRoutes.post("/login", async (req, res) => {
     try {
@@ -17,7 +18,7 @@ exports.authRoutes.post("/login", async (req, res) => {
         if (!user || !user.isActive || !(await (0, password_1.verifyPassword)(password, user.passwordHash)))
             return res.status(401).json({ message: "Thông tin đăng nhập không chính xác." });
         await (0, session_1.createSession)(user.id, res);
-        return res.json({ user: { id: user.id, fullName: user.fullName, email: user.email, phone: user.phone, role: user.role } });
+        return res.json({ user: { id: user.id, fullName: user.fullName, email: user.email, phone: user.phone, role: user.role, permissions: permissions_1.ROLE_PERMISSIONS[user.role] ?? [] } });
     }
     catch {
         return res.status(500).json({ message: "Không thể đăng nhập lúc này." });
@@ -60,5 +61,5 @@ exports.authRoutes.get("/me", async (req, res) => {
         (0, session_1.clearSessionCookie)(res);
         return res.status(401).json({ user: null, message: "UNAUTHORIZED" });
     }
-    return res.json({ user: { id: user.id, fullName: user.fullName, email: user.email, phone: user.phone, role: user.role } });
+    return res.json({ user: { id: user.id, fullName: user.fullName, email: user.email, phone: user.phone, role: user.role, permissions: permissions_1.ROLE_PERMISSIONS[user.role] ?? [] } });
 });

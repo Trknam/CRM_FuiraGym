@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuth } from "@/components/auth/auth-context";
 import {
   LayoutDashboard, Users, UserRoundPlus, Dumbbell, CreditCard,
   QrCode, UserCog, LibraryBig, Sparkles, HeartHandshake, BarChart3, Settings
@@ -27,6 +28,11 @@ const groups = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { user, can } = useAuth();
+  const visibleGroups = groups.map((group) => ({ ...group, items: group.items.filter((item) => {
+    const permissionMap: Record<string, string> = { "/leads": "lead.read", "/members": "member.read", "/packages": "package.read", "/payments": "payment.read", "/checkin": "checkin.read", "/trainers": "trainer.read", "/exercises": "exercise.read", "/ai-workout": "workout.read", "/crm": "crm.read", "/reports": "report.read" };
+    return !permissionMap[item.href] || can(permissionMap[item.href]);
+  }) }));
 
   return (
     <aside className="fixed left-0 top-0 z-30 hidden h-screen w-[250px] border-r border-[#e8ebf2] bg-white md:block">
@@ -37,7 +43,7 @@ export function Sidebar() {
         <div><div className="font-bold">GymCRM</div><div className="text-xs text-[#98a2b3]">Management System</div></div>
       </div>
       <nav className="h-[calc(100vh-72px)] overflow-y-auto px-3 py-5">
-        {groups.map((group) => (
+        {visibleGroups.map((group) => (
           <div key={group.title} className="mb-6">
             <div className="mb-2 px-3 text-[10px] font-bold tracking-[.14em] text-[#98a2b3]">{group.title}</div>
             <div className="space-y-1">
@@ -53,7 +59,7 @@ export function Sidebar() {
           <p className="mb-3 text-xs leading-5 text-[#667085]">Tạo kế hoạch tập cá nhân hóa từ mục tiêu, trình độ và lịch tập.</p>
           <Link href="/ai-workout" className="text-xs font-semibold text-[#635bff]">Mở AI Planner →</Link>
         </div>
-        <Link href="/settings" className="sidebar-item mt-5"><Settings size={18}/><span className="text-sm">Cài đặt</span></Link>
+        {user.role === "SUPER_ADMIN" && <Link href="/settings" className="sidebar-item mt-5"><Settings size={18}/><span className="text-sm">Cài đặt</span></Link>}
       </nav>
     </aside>
   );

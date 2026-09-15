@@ -16,7 +16,6 @@ export function LoginForm() {
     const identifier = String(form.get("identifier") ?? "").trim();
     const password = String(form.get("password") ?? "");
     if (!identifier || !password) { setError("Vui lòng nhập đầy đủ email/số điện thoại và mật khẩu."); return; }
-
     setLoading(true);
     try {
       const response = await fetch("/api/auth/login", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ identifier, password }) });
