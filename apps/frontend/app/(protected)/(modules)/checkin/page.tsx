@@ -30,6 +30,11 @@ export default function CheckinPage() {
                 },
             ]}
             columns={["member", "time", "method", "status"]}
+            removeActionLabel="Xóa check-in"
+            removeConfirmMessage="Lượt check-in này sẽ bị xóa khỏi lịch sử. Thao tác này không thể hoàn tác. Bạn có chắc muốn tiếp tục?"
+            bulkActionLabel="Xóa check-in"
+            bulkConfirmMessage="Các lượt check-in đã chọn sẽ bị xóa khỏi lịch sử. Thao tác này không thể hoàn tác. Bạn có chắc muốn tiếp tục?"
+            removeIcon="trash"
             seed={[]}
         />
     );

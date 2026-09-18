@@ -29,7 +29,10 @@ export default function PaymentsPage() {
         const saved = result.data as CrudItem;
         if (values.method === "Chuyển khoản" || values.method === "Thẻ") {
             setPaymentModal({
-                values,
+                values: {
+                    ...values,
+                    memberName: String(saved.member ?? ""),
+                },
                 paymentId: saved.id,
                 mode: values.method === "Thẻ" ? "CARD" : "BANK_TRANSFER",
             });
@@ -73,6 +76,7 @@ export default function PaymentsPage() {
                 removeConfirmMessage="Giao dịch này sẽ bị xóa khỏi lịch sử giao dịch. Thao tác này không thể hoàn tác. Bạn có chắc muốn tiếp tục?"
                 bulkActionLabel="Xóa giao dịch"
                 bulkConfirmMessage="Các giao dịch đã chọn sẽ bị xóa khỏi lịch sử giao dịch. Thao tác này không thể hoàn tác. Bạn có chắc muốn tiếp tục?"
+                removeIcon="trash"
                 rowAction={{
                     label: "Đã thanh toán",
                     endpoint: "/api/payments/:id/confirm",

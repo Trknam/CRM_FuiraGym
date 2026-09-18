@@ -53,18 +53,39 @@ async function invalidate(branchId: string) {
 }
 
 async function syncExpiredMemberships(branchId: string) {
-  const result = await prisma.membership.updateMany({
-    where: {
-      member: { branchId },
-      status: "ACTIVE",
-      endDate: { lt: new Date() },
-    },
-    data: { status: "EXPIRED" },
-  });
-  if (result.count > 0) {
+  const now = new Date();
+  const [expired, restored] = await Promise.all([
+    prisma.membership.updateMany({
+      where: {
+        member: { branchId },
+        status: "ACTIVE",
+        endDate: { lt: now },
+      },
+      data: { status: "EXPIRED" },
+    }),
+    prisma.membership.updateMany({
+      where: {
+        member: { branchId },
+        status: "EXPIRED",
+        endDate: { gte: now },
+      },
+      data: { status: "ACTIVE" },
+    }),
+  ]);
+  if (expired.count > 0 || restored.count > 0) {
     await invalidate(branchId);
   }
-  return result.count;
+  return expired.count + restored.count;
+}
+
+function resolveMembershipStatus(
+  value: unknown,
+  endDate: Date,
+  fallback: "ACTIVE" | "EXPIRED" | "CANCELLED",
+) {
+  const requested = membershipStatus(value, fallback);
+  if (requested === "CANCELLED") return "CANCELLED" as const;
+  return endDate < new Date() ? "EXPIRED" : "ACTIVE";
 }
 
 membersRoutes.get("/", async (req, res) => {
@@ -114,7 +135,7 @@ membersRoutes.post("/", async (req, res) => {
         const startDate = parseDate(body.startDate, new Date()) ?? new Date();
         const endDate = parseDate(body.endDate) ?? new Date(startDate.getTime() + pkg.durationDays * 24 * 60 * 60 * 1000);
         if (endDate <= startDate) throw new Error("INVALID_MEMBERSHIP_DATES");
-        await tx.membership.create({ data: { memberId: created.id, packageId: pkg.id, startDate, endDate, price: pkg.price, status: membershipStatus(body.membershipStatus, "ACTIVE") } });
+        await tx.membership.create({ data: { memberId: created.id, packageId: pkg.id, startDate, endDate, price: pkg.price, status: resolveMembershipStatus(body.membershipStatus, endDate, "ACTIVE") } });
       }
       return tx.member.findUniqueOrThrow({ where: { id: created.id }, include: { memberships: { orderBy: { endDate: "desc" }, take: 1, include: { package: true } } } });
     });
@@ -162,13 +183,13 @@ membersRoutes.patch("/", async (req, res) => {
         const startDate = parseDate(body.startDate, new Date()) ?? new Date();
         const endDate = parseDate(body.endDate) ?? new Date(startDate.getTime() + pkg.durationDays * 24 * 60 * 60 * 1000);
         if (endDate <= startDate) throw new Error("INVALID_MEMBERSHIP_DATES");
-        if (currentMembership) await tx.membership.update({ where: { id: currentMembership.id }, data: { packageId: pkg.id, startDate, endDate, price: pkg.price, status: membershipStatus(body.membershipStatus, "ACTIVE") } });
-        else await tx.membership.create({ data: { memberId: id, packageId: pkg.id, startDate, endDate, price: pkg.price, status: membershipStatus(body.membershipStatus, "ACTIVE") } });
+        if (currentMembership) await tx.membership.update({ where: { id: currentMembership.id }, data: { packageId: pkg.id, startDate, endDate, price: pkg.price, status: resolveMembershipStatus(body.membershipStatus, endDate, "ACTIVE") } });
+        else await tx.membership.create({ data: { memberId: id, packageId: pkg.id, startDate, endDate, price: pkg.price, status: resolveMembershipStatus(body.membershipStatus, endDate, "ACTIVE") } });
       } else if (currentMembership) {
         const startDate = parseDate(body.startDate, currentMembership.startDate) ?? currentMembership.startDate;
         const endDate = parseDate(body.endDate, currentMembership.endDate) ?? currentMembership.endDate;
         if (endDate <= startDate) throw new Error("INVALID_MEMBERSHIP_DATES");
-        await tx.membership.update({ where: { id: currentMembership.id }, data: { startDate, endDate, status: membershipStatus(body.membershipStatus, currentMembership.status) } });
+        await tx.membership.update({ where: { id: currentMembership.id }, data: { startDate, endDate, status: resolveMembershipStatus(body.membershipStatus, endDate, currentMembership.status) } });
       }
       return tx.member.findUniqueOrThrow({ where: { id }, include: { memberships: { orderBy: { endDate: "desc" }, take: 1, include: { package: true } } } });
     });

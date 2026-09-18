@@ -1,7 +1,18 @@
 "use client";
 
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
-import { Check, CheckSquare, CirclePause, Ellipsis, Pencil, Plus, Search, UserRoundX, X } from "lucide-react";
+import {
+    Check,
+    CheckSquare,
+    CirclePause,
+    Ellipsis,
+    Pencil,
+    Plus,
+    Search,
+    Trash2,
+    UserRoundX,
+    X,
+} from "lucide-react";
 import { PageTitle } from "@/components/ui/page-title";
 
 export type Field = {
@@ -35,7 +46,7 @@ type Props = {
     readOnly?: boolean;
     removeActionLabel?: string;
     removeConfirmMessage?: string;
-    removeIcon?: "pause" | "user-off";
+    removeIcon?: "pause" | "user-off" | "trash";
     bulkActionLabel?: string;
     bulkConfirmMessage?: string;
     rowAction?: {
@@ -412,7 +423,7 @@ export function CrudModulePage({
                                             </button>
                                             {selectionMode && selectedIds.length > 0 && (
                                                 <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50" onClick={() => { setBulkMenuOpen(false); void bulkRemove(); }}>
-                                                    <CirclePause size={16} /> {bulkActionLabel}
+                                                    {removeIcon === "trash" ? <Trash2 size={16} /> : removeIcon === "user-off" ? <UserRoundX size={16} /> : <CirclePause size={16} />} {bulkActionLabel}
                                                 </button>
                                             )}
                                             {selectionMode && (
@@ -425,14 +436,14 @@ export function CrudModulePage({
                                 </div>
                             )}
                             <div className="text-xs text-[var(--muted)]">
-                                {loading ? "Đang tải từ PostgreSQL..." : `${filtered.length} / ${items.length} bản ghi`}
+                                {loading ? "Đang tải..." : `${filtered.length} / ${items.length} bản ghi`}
                             </div>
                         </div>
                     </div>
                     <div className="overflow-x-auto">
                         {loading ? (
                             <div className="p-12 text-center text-sm text-[var(--muted)]">
-                                Đang tải dữ liệu từ PostgreSQL...
+                                Đang tải dữ liệu...
                             </div>
                         ) : (
                             <table className="w-full min-w-[760px] text-left text-sm">
@@ -509,7 +520,9 @@ export function CrudModulePage({
                                                             className="btn btn-danger !p-2"
                                                             onClick={() => remove(item.id)}
                                                         >
-                                                            {removeIcon === "user-off" ? (
+                                                            {removeIcon === "trash" ? (
+                                                                <Trash2 size={15} />
+                                                            ) : removeIcon === "user-off" ? (
                                                                 <UserRoundX size={15} />
                                                             ) : (
                                                                 <CirclePause size={15} />
@@ -546,7 +559,7 @@ export function CrudModulePage({
                                     {editing ? `Sửa ${title}` : action}
                                 </h2>
                                 <p className="mt-1 text-xs text-[var(--muted)]">
-                                    Dữ liệu được lưu trực tiếp vào PostgreSQL.
+                                    Nhập thông tin và lưu thay đổi.
                                 </p>
                             </div>
                             <button

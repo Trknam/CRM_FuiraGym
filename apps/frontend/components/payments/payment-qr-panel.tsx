@@ -27,6 +27,7 @@ export function PaymentQrPanel({ values, paymentId, mode, onClose, onConfirmed }
 
     const amount = Math.round(Number(values?.amount ?? 0));
     const memberId = String(values?.memberId ?? "");
+    const memberName = String(values?.memberName ?? "").trim();
     const content = `THANH TOAN ${paymentId.slice(-8).toUpperCase()}`.slice(0, 25);
 
     useEffect(() => {
@@ -173,7 +174,7 @@ export function PaymentQrPanel({ values, paymentId, mode, onClose, onConfirmed }
                                 <div className="rounded-2xl border bg-slate-50 p-4">
                                     <div className="text-xs text-slate-500">Hội viên</div>
                                     <div className="mt-1 font-semibold">
-                                        {member?.name ?? member?.fullName ?? memberId}
+                                        {memberName || member?.name || member?.fullName || "Không xác định"}
                                     </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-3">
