@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { Check, CheckSquare, CirclePause, Ellipsis, Pencil, Plus, Search, UserRoundX, X } from "lucide-react";
 import { PageTitle } from "@/components/ui/page-title";
 
 export type Field = {
@@ -10,7 +10,9 @@ export type Field = {
     type?: "text" | "number" | "date" | "datetime-local" | "select";
     options?: string[];
     optionsEndpoint?: string;
+    allowEmptyOption?: boolean;
     required?: boolean;
+    hiddenOnCreate?: boolean;
 };
 export type CrudItem = Record<string, string | number> & { id: string };
 
@@ -31,6 +33,20 @@ type Props = {
     columns: string[];
     columnLabels?: Record<string, string>;
     readOnly?: boolean;
+    removeActionLabel?: string;
+    removeConfirmMessage?: string;
+    removeIcon?: "pause" | "user-off";
+    bulkActionLabel?: string;
+    bulkConfirmMessage?: string;
+    rowAction?: {
+        label: string;
+        endpoint: string;
+        method?: "POST" | "PATCH";
+        icon?: ReactNode;
+        confirmMessage?: string;
+    };
+    onCreate?: (values: Record<string, string | number>) => Promise<CrudItem | void>;
+    refreshKey?: number;
 };
 
 const inputValue = (field: Field, value: unknown) => {
@@ -87,6 +103,14 @@ export function CrudModulePage({
     columns,
     columnLabels = {},
     readOnly = false,
+    removeActionLabel = "Xóa",
+    removeConfirmMessage = "Bạn có chắc muốn xóa bản ghi này?",
+    removeIcon = "pause",
+    bulkActionLabel = removeActionLabel,
+    bulkConfirmMessage = removeConfirmMessage,
+    rowAction,
+    onCreate,
+    refreshKey = 0,
 }: Props) {
     const [items, setItems] = useState<CrudItem[]>([]);
     const [query, setQuery] = useState("");
@@ -98,6 +122,9 @@ export function CrudModulePage({
     const [fieldOptions, setFieldOptions] = useState<
         Record<string, { value: string; label: string }[]>
     >({});
+    const [selectionMode, setSelectionMode] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
 
     const apiPath = `/api/${moduleKey}`;
 
@@ -129,7 +156,7 @@ export function CrudModulePage({
 
     useEffect(() => {
         void loadItems();
-    }, [moduleKey]);
+    }, [moduleKey, refreshKey]);
 
     useEffect(() => {
         let cancelled = false;
@@ -168,6 +195,27 @@ export function CrudModulePage({
         );
     }, [items, query]);
 
+    const toggleSelection = (id: string) => {
+        setSelectedIds((current) =>
+            current.includes(id) ? current.filter((value) => value !== id) : [...current, id],
+        );
+    };
+
+    const toggleSelectAll = () => {
+        const ids = filtered.map((item) => item.id);
+        setSelectedIds((current) =>
+            ids.length > 0 && ids.every((id) => current.includes(id))
+                ? current.filter((id) => !ids.includes(id))
+                : Array.from(new Set([...current, ...ids])),
+        );
+    };
+
+    const exitSelectionMode = () => {
+        setSelectionMode(false);
+        setSelectedIds([]);
+        setBulkMenuOpen(false);
+    };
+
     const openCreate = () => {
         if (readOnly) {
             void loadItems();
@@ -184,7 +232,7 @@ export function CrudModulePage({
     };
 
     async function remove(id: string) {
-        if (!window.confirm("Bạn có chắc muốn xóa bản ghi này?")) return;
+        if (!window.confirm(removeConfirmMessage)) return;
         setError("");
         try {
             const response = await fetch(apiPath, {
@@ -194,9 +242,77 @@ export function CrudModulePage({
             });
             const result = await response.json();
             if (!response.ok) throw new Error(result.message || "Không thể xóa dữ liệu.");
-            setItems((current) => current.filter((item) => item.id !== id));
+            if (Array.isArray(result.deletedIds)) {
+                setItems((current) => current.filter((item) => !result.deletedIds.includes(item.id)));
+                return;
+            }
+            const updated = result.data as CrudItem | undefined;
+            setItems((current) =>
+                current.map((item) =>
+                    item.id === id
+                        ? updated ?? { ...item, status: "Tạm nghỉ" }
+                        : item,
+                ),
+            );
         } catch (err) {
             setError(err instanceof Error ? err.message : "Không thể xóa dữ liệu.");
+        }
+    }
+
+    async function runRowAction(item: CrudItem) {
+        if (rowAction?.confirmMessage && !window.confirm(rowAction.confirmMessage)) return;
+        setError("");
+        try {
+            const response = await fetch(rowAction!.endpoint.replace(":id", item.id), {
+                method: rowAction!.method ?? "POST",
+                headers: { "Content-Type": "application/json" },
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.message || "Không thể thực hiện thao tác.");
+            if (result.data) {
+                setItems((current) =>
+                    current.map((currentItem) =>
+                        currentItem.id === item.id ? (result.data as CrudItem) : currentItem,
+                    ),
+                );
+            } else {
+                await loadItems();
+            }
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Không thể thực hiện thao tác.");
+        }
+    }
+
+    async function bulkRemove() {
+        if (selectedIds.length === 0) return;
+        if (!window.confirm(bulkConfirmMessage + "\n\nSố lượng: " + selectedIds.length)) return;
+        setError("");
+        try {
+            const response = await fetch(apiPath, {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ids: selectedIds }),
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.message || "Không thể xử lý dữ liệu.");
+            if (Array.isArray(result.deletedIds)) {
+                setItems((current) =>
+                    current.filter((item) => !result.deletedIds.includes(item.id)),
+                );
+                exitSelectionMode();
+                return;
+            }
+            const updatedItems = (result.data ?? []) as CrudItem[];
+            const updatedMap = new Map(updatedItems.map((item) => [item.id, item]));
+            setItems((current) =>
+                current.map((item) =>
+                    updatedMap.get(item.id) ??
+                    (selectedIds.includes(item.id) ? { ...item, status: "Tạm nghỉ" } : item),
+                ),
+            );
+            exitSelectionMode();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Không thể xử lý dữ liệu.");
         }
     }
 
@@ -212,6 +328,14 @@ export function CrudModulePage({
         });
 
         try {
+            if (!editing && onCreate) {
+                const saved = await onCreate(values);
+                if (saved) {
+                    setItems((current) => [saved, ...current]);
+                }
+                setOpen(false);
+                return;
+            }
             const response = await fetch(apiPath, {
                 method: editing ? "PATCH" : "POST",
                 headers: { "Content-Type": "application/json" },
@@ -262,10 +386,47 @@ export function CrudModulePage({
                                 placeholder={`Tìm trong ${title.toLowerCase()}...`}
                             />
                         </div>
-                        <div className="text-xs text-[var(--muted)]">
-                            {loading
-                                ? "Đang tải từ PostgreSQL..."
-                                : `${filtered.length} / ${items.length} bản ghi`}
+                        <div className="flex items-center gap-2">
+                            {selectionMode && selectedIds.length > 0 && (
+                                <span className="text-xs font-semibold text-[var(--muted)]">
+                                    Đã chọn {selectedIds.length}
+                                </span>
+                            )}
+                            {!readOnly && (
+                                <div className="relative">
+                                    <button
+                                        type="button"
+                                        className="btn btn-secondary"
+                                        onClick={() => setBulkMenuOpen((value) => !value)}
+                                    >
+                                        <Ellipsis size={17} />
+                                        {selectionMode ? "Đang chọn nhiều" : "Chọn nhiều"}
+                                    </button>
+                                    {bulkMenuOpen && (
+                                        <div className="absolute right-0 top-full z-20 mt-2 w-48 rounded-xl border border-[var(--border)] bg-white p-1 shadow-lg">
+                                            <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--surface-subtle)]" onClick={() => { setSelectionMode(true); setSelectedIds(filtered.map((item) => item.id)); setBulkMenuOpen(false); }}>
+                                                <CheckSquare size={16} /> Chọn tất cả
+                                            </button>
+                                            <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--surface-subtle)]" onClick={() => { setSelectionMode(true); setSelectedIds([]); setBulkMenuOpen(false); }}>
+                                                <Check size={16} /> Chọn thủ công
+                                            </button>
+                                            {selectionMode && selectedIds.length > 0 && (
+                                                <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50" onClick={() => { setBulkMenuOpen(false); void bulkRemove(); }}>
+                                                    <CirclePause size={16} /> {bulkActionLabel}
+                                                </button>
+                                            )}
+                                            {selectionMode && (
+                                                <button type="button" className="w-full rounded-lg px-3 py-2 text-left text-sm text-[var(--muted)] hover:bg-[var(--surface-subtle)]" onClick={exitSelectionMode}>
+                                                    Thoát chọn nhiều
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            <div className="text-xs text-[var(--muted)]">
+                                {loading ? "Đang tải từ PostgreSQL..." : `${filtered.length} / ${items.length} bản ghi`}
+                            </div>
                         </div>
                     </div>
                     <div className="overflow-x-auto">
@@ -277,6 +438,11 @@ export function CrudModulePage({
                             <table className="w-full min-w-[760px] text-left text-sm">
                                 <thead className="bg-[var(--surface-subtle)] text-xs font-semibold text-[var(--muted)]">
                                     <tr>
+                                        {selectionMode && (
+                                            <th className="w-12 px-5 py-3">
+                                                <input type="checkbox" aria-label="Chọn tất cả" checked={filtered.length > 0 && filtered.every((item) => selectedIds.includes(item.id))} onChange={toggleSelectAll} />
+                                            </th>
+                                        )}
                                         {columns.map((key) => (
                                             <th key={key} className="px-5 py-3">
                                                 {columnLabels[key] ??
@@ -292,6 +458,11 @@ export function CrudModulePage({
                                 <tbody>
                                     {filtered.map((item) => (
                                         <tr className="table-row" key={item.id}>
+                                            {selectionMode && (
+                                                <td className="px-5 py-3">
+                                                    <input type="checkbox" aria-label={"Chọn " + displayFieldValue(item, columns[0])} checked={selectedIds.includes(item.id)} onChange={() => toggleSelection(item.id)} />
+                                                </td>
+                                            )}
                                             {columns.map((key, index) => {
                                                 const field = fields.find((f) => f.key === key);
                                                 const rawValue = displayFieldValue(item, key);
@@ -316,6 +487,16 @@ export function CrudModulePage({
                                             {!readOnly && (
                                                 <td className="px-5 py-3">
                                                     <div className="flex justify-end gap-1">
+                                                        {rowAction &&
+                                                            item.status === "Chờ thanh toán" && (
+                                                                <button
+                                                                    aria-label={rowAction.label}
+                                                                    className="btn btn-primary !p-2"
+                                                                    onClick={() => runRowAction(item)}
+                                                                >
+                                                                    {rowAction.icon ?? <Check size={15} />}
+                                                                </button>
+                                                            )}
                                                         <button
                                                             aria-label="Sửa"
                                                             className="btn btn-secondary !p-2"
@@ -324,11 +505,15 @@ export function CrudModulePage({
                                                             <Pencil size={15} />
                                                         </button>
                                                         <button
-                                                            aria-label="Xóa"
+                                                            aria-label={removeActionLabel}
                                                             className="btn btn-danger !p-2"
                                                             onClick={() => remove(item.id)}
                                                         >
-                                                            <Trash2 size={15} />
+                                                            {removeIcon === "user-off" ? (
+                                                                <UserRoundX size={15} />
+                                                            ) : (
+                                                                <CirclePause size={15} />
+                                                            )}
                                                         </button>
                                                     </div>
                                                 </td>
@@ -373,7 +558,9 @@ export function CrudModulePage({
                             </button>
                         </div>
                         <div className="grid gap-4 sm:grid-cols-2">
-                            {fields.map((field) => {
+                            {fields
+                                .filter((field) => !(field.hiddenOnCreate && !editing))
+                                .map((field) => {
                                 const options = field.optionsEndpoint
                                     ? (fieldOptions[field.key] ?? [])
                                     : (field.options ?? []).map((option) => ({
@@ -382,7 +569,8 @@ export function CrudModulePage({
                                       }));
                                 const currentValue = inputValue(
                                     field,
-                                    editing?.[field.key] ?? options[0]?.value ?? "",
+                                    editing?.[field.key] ??
+                                        (field.allowEmptyOption ? "" : options[0]?.value ?? ""),
                                 );
                                 return (
                                     <label key={field.key} className="text-sm font-semibold">
@@ -395,8 +583,10 @@ export function CrudModulePage({
                                                 defaultValue={currentValue}
                                                 className="field mt-2"
                                             >
-                                                <option value="" disabled>
-                                                    Chọn {field.label.toLowerCase()}
+                                                <option value="" disabled={!field.allowEmptyOption}>
+                                                    {field.allowEmptyOption
+                                                        ? "Không có gói"
+                                                        : `Chọn ${field.label.toLowerCase()}`}
                                                 </option>
                                                 {options.map((option) => (
                                                     <option key={option.value} value={option.value}>
@@ -418,7 +608,7 @@ export function CrudModulePage({
                                         )}
                                     </label>
                                 );
-                            })}
+                                })}
                         </div>
                         <div className="mt-6 flex justify-end gap-2">
                             <button

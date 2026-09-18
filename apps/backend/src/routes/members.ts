@@ -52,10 +52,26 @@ async function invalidate(branchId: string) {
   await cacheDelete(cacheKeys.members(branchId));
 }
 
+async function syncExpiredMemberships(branchId: string) {
+  const result = await prisma.membership.updateMany({
+    where: {
+      member: { branchId },
+      status: "ACTIVE",
+      endDate: { lt: new Date() },
+    },
+    data: { status: "EXPIRED" },
+  });
+  if (result.count > 0) {
+    await invalidate(branchId);
+  }
+  return result.count;
+}
+
 membersRoutes.get("/", async (req, res) => {
   try {
     await requirePermission(req, "member.read");
     const branchId = await defaultBranchId(req);
+    await syncExpiredMemberships(branchId);
     const key = cacheKeys.members(branchId);
     const cached = await cacheGet<unknown[]>(key);
     if (cached) return res.json({ data: cached, cached: true });
@@ -133,7 +149,14 @@ membersRoutes.patch("/", async (req, res) => {
       await tx.member.update({ where: { id }, data: { fullName, phone, email, dateOfBirth: parseDate(body.dateOfBirth, existing.dateOfBirth), address: body.address === undefined ? existing.address : String(body.address).trim() || null, status: memberStatus(body.memberStatus, existing.status) } });
       const packageId = String(body.packageId ?? "").trim();
       const currentMembership = existing.memberships[0];
-      if (packageId && packageId !== currentMembership?.packageId) {
+      if (body.packageId !== undefined && !packageId) {
+        if (currentMembership) {
+          await tx.membership.update({
+            where: { id: currentMembership.id },
+            data: { status: "CANCELLED" },
+          });
+        }
+      } else if (packageId && packageId !== currentMembership?.packageId) {
         const pkg = await tx.gymPackage.findFirst({ where: { id: packageId, branchId, status: "ACTIVE" } });
         if (!pkg) throw new Error("INVALID_PACKAGE");
         const startDate = parseDate(body.startDate, new Date()) ?? new Date();
@@ -163,13 +186,18 @@ membersRoutes.patch("/", async (req, res) => {
 membersRoutes.delete("/", async (req, res) => {
   try {
     await requirePermission(req, "member.delete");
-    const id = String(req.body?.id ?? "").trim();
     const branchId = await defaultBranchId(req);
-    const existing = await prisma.member.findFirst({ where: { id, branchId }, select: { id: true } });
-    if (!existing) return res.status(404).json({ message: "Không tìm thấy hội viên." });
-    await prisma.member.update({ where: { id }, data: { status: "INACTIVE" } });
+    const ids: string[] = Array.from(new Set<string>(Array.isArray(req.body?.ids) ? req.body.ids.map((value: unknown) => String(value).trim()).filter(Boolean) : [String(req.body?.id ?? "").trim()].filter(Boolean)));
+    if (!branchId || ids.length === 0) return res.status(400).json({ message: "Chưa chọn hội viên." });
+    const existing = await prisma.member.findMany({ where: { id: { in: ids }, branchId }, select: { id: true } });
+    if (existing.length === 0) return res.status(404).json({ message: "Không tìm thấy hội viên." });
+    await prisma.member.updateMany({ where: { id: { in: existing.map((item) => item.id) }, branchId }, data: { status: "INACTIVE" } });
+    const updated = await prisma.member.findMany({
+      where: { id: { in: existing.map((item) => item.id) }, branchId },
+      include: { memberships: { orderBy: { endDate: "desc" }, take: 1, include: { package: true } } },
+    });
     await invalidate(branchId);
-    return res.json({ message: "Đã ngừng hoạt động hội viên." });
+    return res.json({ message: "Đã ngừng hoạt động hội viên.", data: updated.map(mapMember) });
   } catch (error) {
     console.error("[members] delete failed", error);
     if (error instanceof Error && "status" in error) return res.status(Number((error as any).status)).json({ message: (error as any).message });

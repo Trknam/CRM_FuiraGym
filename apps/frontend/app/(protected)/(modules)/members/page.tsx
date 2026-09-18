@@ -17,7 +17,8 @@ export default function MembersPage() {
                     key: "packageId",
                     label: "Gói tập",
                     type: "select",
-                    optionsEndpoint: "/api/packages?status=ACTIVE",
+                    optionsEndpoint: "/api/packages?status=all",
+                    allowEmptyOption: true,
                 },
                 {
                     key: "memberStatus",
@@ -51,6 +52,11 @@ export default function MembersPage() {
                 memberStatus: "Trạng thái hội viên",
                 endDate: "Ngày hết hạn",
             }}
+            removeActionLabel="Ngừng hoạt động"
+            removeConfirmMessage="Hội viên sẽ được chuyển sang trạng thái ngừng hoạt động và giữ lại lịch sử. Bạn có chắc muốn tiếp tục?"
+            removeIcon="user-off"
+            bulkActionLabel="Ngừng hoạt động"
+            bulkConfirmMessage="Các hội viên đã chọn sẽ được chuyển sang trạng thái ngừng hoạt động và giữ lại lịch sử. Bạn có chắc muốn tiếp tục?"
             seed={[]}
         />
     );
