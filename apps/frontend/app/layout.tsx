@@ -1,13 +1,17 @@
 import type { Metadata } from "next";
 import "@/app/globals.css";
+
 export const metadata: Metadata = {
-  title: "GymCRM",
-  description: "Gym CRM & AI Workout Planner",
+  title: "FuiraCRM",
+  description: "FuiraCRM - Quản lý phòng Gym",
+  icons: {
+    icon: "/FuiraGym.png",
+    shortcut: "/FuiraGym.png",
+    apple: "/FuiraGym.png",
+  },
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="vi">
       <body>{children}</body>
