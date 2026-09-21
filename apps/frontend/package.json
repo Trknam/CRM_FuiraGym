@@ -5,10 +5,15 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "cloudflare:build": "opennextjs-cloudflare build",
+    "cloudflare:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "cloudflare:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cloudflare:typegen": "wrangler types"
   },
   "dependencies": {
     "@gym-crm/shared": "workspace:*",
+    "@opennextjs/cloudflare": "^1.20.6",
     "@types/qrcode": "^1.5.6",
     "lucide-react": "^0.468.0",
     "next": "^15.5.0",
@@ -22,6 +27,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "tailwindcss": "^4.1.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "wrangler": "^4.135.0"
   }
 }
