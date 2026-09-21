@@ -19,7 +19,9 @@
     "build": "pnpm --recursive build",
     "typecheck": "pnpm --recursive typecheck",
     "db:generate": "pnpm --filter @gym-crm/backend exec prisma generate",
-    "db:seed": "pnpm --filter @gym-crm/backend db:seed"
+    "db:seed": "pnpm --filter @gym-crm/backend db:seed",
+    "cloudflare:build": "pnpm --filter @gym-crm/frontend cloudflare:build",
+    "cloudflare:deploy": "pnpm --filter @gym-crm/frontend cloudflare:deploy"
   },
   "devDependencies": {
     "prettier": "^3.9.8"
