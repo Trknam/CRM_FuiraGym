@@ -1,5 +1,4 @@
 import { Router } from "express";
-import { Ollama } from "ollama";
 import { prisma } from "../db/prisma";
 import { requirePermission, getAccessibleBranchIds } from "../auth/authorization";
 import {
@@ -7,22 +6,13 @@ import {
   filterWorkoutExercises,
   parseLimitations,
 } from "../services/workout-rules";
-import {
-  buildWorkoutSemanticQuery,
-  rankExercisesByVector,
-  workoutVectorConfig,
-} from "../services/workout-vector-search";
 import { recordActivity } from "../services/activity";
 
 export const workoutsRoutes = Router();
 
-const OLLAMA_HOST = (process.env.OLLAMA_HOST ?? "https://ollama.com").replace(/\/$/, "");
-const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY ?? "";
-const MODEL = process.env.WORKOUT_AI_MODEL ?? "gpt-oss:120b";
-const ollama = new Ollama({
-  host: OLLAMA_HOST,
-  headers: OLLAMA_API_KEY ? { Authorization: `Bearer ${OLLAMA_API_KEY}` } : {},
-});
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? "";
+const MODEL = process.env.WORKOUT_AI_MODEL ?? "gemini-2.5-flash";
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
 const text = (value: unknown, fallback = "") => String(value ?? fallback).trim();
 const num = (value: unknown, fallback = 0) => (Number.isFinite(Number(value)) ? Math.round(Number(value)) : fallback);
@@ -158,20 +148,44 @@ function buildPrompt(input: {
 }
 
 async function generatePlan(prompt: string) {
+  if (!GEMINI_API_KEY) throw new Error("AI_CONFIG_MISSING");
+
   try {
-    const response = await ollama.chat({
-      model: MODEL,
-      stream: false,
-      messages: [
-        { role: "system", content: "Trả về đúng JSON schema, không markdown và không thêm văn bản bên ngoài JSON." },
-        { role: "user", content: prompt },
-      ],
-      format: WORKOUT_SCHEMA as any,
-      options: { temperature: 0.1 },
-    });
-    return normalizePlan(JSON.parse(response.message?.content ?? ""));
+    const response = await fetch(
+      `${GEMINI_API_URL}/${MODEL}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: "Trả về đúng JSON schema, không markdown và không thêm văn bản bên ngoài JSON." }],
+          },
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.1,
+            responseMimeType: "application/json",
+            responseSchema: WORKOUT_SCHEMA,
+          },
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      console.error("Gemini API error:", response.status, detail.slice(0, 1000));
+      throw new Error("AI_UNAVAILABLE");
+    }
+
+    const payload = (await response.json()) as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    const content = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
+    if (!content) throw new Error("AI_INVALID_JSON");
+
+    return normalizePlan(JSON.parse(content));
   } catch (error) {
     if (error instanceof SyntaxError) throw new Error("AI_INVALID_JSON");
+    if (error instanceof Error && error.message === "AI_CONFIG_MISSING") throw error;
     throw new Error("AI_UNAVAILABLE");
   }
 }
@@ -230,24 +244,13 @@ workoutsRoutes.post("/", async (req, res) => {
       });
     }
 
-    let ranked = usable.map((exercise, index) => ({ id: exercise.id, similarity: 0, fallbackRank: index }));
-    let vectorEnabled = true;
-
-    try {
-      const vectorRanks = await rankExercisesByVector(
-        usable,
-        buildWorkoutSemanticQuery({ goal, level, equipment, preferences, limitations }),
-        Math.min(32, usable.length),
-      );
-      const scoreById = new Map(vectorRanks.map((item) => [item.id, Number(item.similarity)]));
-      ranked = usable
-        .map((exercise, index) => ({ id: exercise.id, similarity: scoreById.get(exercise.id) ?? -1, fallbackRank: index }))
-        .sort((a, b) => b.similarity - a.similarity || a.fallbackRank - b.fallbackRank)
-        .filter((item) => item.similarity >= 0);
-    } catch (error) {
-      vectorEnabled = false;
-      console.warn("Workout vector search unavailable; using Rule Engine ranking:", error instanceof Error ? error.message : error);
-    }
+    // Production tạm thời dùng Rule Engine hoàn toàn, không phụ thuộc Ollama/embedding server.
+    // filterWorkoutExercises đã sắp xếp bài theo mục tiêu, trình độ, thiết bị và hạn chế.
+    const ranked = usable.map((exercise, index) => ({
+      id: exercise.id,
+      similarity: Math.max(0, 1 - index / Math.max(1, usable.length)),
+      fallbackRank: index,
+    }));
 
     const selectedIds = new Set(ranked.slice(0, Math.min(32, ranked.length)).map((item) => item.id));
     const catalog = usable
@@ -271,8 +274,11 @@ workoutsRoutes.post("/", async (req, res) => {
       try {
         data = await generatePlan(prompt);
       } catch (error) {
+        if (error instanceof Error && error.message === "AI_CONFIG_MISSING") {
+          return res.status(503).json({ message: "Gemini API chưa được cấu hình. Hãy thêm GEMINI_API_KEY cho backend." });
+        }
         if (error instanceof Error && error.message === "AI_UNAVAILABLE") {
-          return res.status(503).json({ message: `Ollama Cloud chưa sẵn sàng. Kiểm tra OLLAMA_API_KEY và model ${MODEL}.` });
+          return res.status(503).json({ message: `Gemini API chưa sẵn sàng. Kiểm tra GEMINI_API_KEY và model ${MODEL}.` });
         }
         validationError = "AI không trả về JSON hợp lệ.";
         continue;
@@ -285,7 +291,7 @@ workoutsRoutes.post("/", async (req, res) => {
     if (!data || validationError) {
       return res.status(502).json({
         message: `AI chưa tạo được kế hoạch hợp lệ sau 2 lần kiểm tra. ${validationError}`,
-        data: { vectorSearch: vectorEnabled, embeddingModel: workoutVectorConfig.model, activeLimitations: rules.activeLimitations },
+        data: { vectorSearch: false, ranking: "rule-engine", activeLimitations: rules.activeLimitations },
       });
     }
 
@@ -360,8 +366,8 @@ workoutsRoutes.post("/", async (req, res) => {
         safetyNote: text(data.safetyNote),
         exerciseCount: plan.days.reduce((total, day) => total + day.exercises.length, 0),
         retrieval: {
-          vectorSearch: vectorEnabled,
-          embeddingModel: workoutVectorConfig.model,
+          vectorSearch: false,
+          ranking: "rule-engine",
           candidateCount: usable.length,
           catalogCount: catalog.length,
           activeLimitations: rules.activeLimitations,
@@ -373,6 +379,6 @@ workoutsRoutes.post("/", async (req, res) => {
     const status = (error as any)?.status;
     if (status) return res.status(status).json({ message });
     console.error("Workout generation error:", error);
-    return res.status(500).json({ message: "Không thể tạo workout bằng Ollama Cloud." });
+    return res.status(500).json({ message: "Không thể tạo workout bằng Gemini API." });
   }
 });

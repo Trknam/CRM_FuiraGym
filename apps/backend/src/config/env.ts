@@ -5,4 +5,6 @@ export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   publicAppUrl: process.env.PUBLIC_APP_URL ?? "http://localhost:3000",
   renewalSecret: process.env.RENEWAL_SECRET ?? "fuira-gym-renewal-secret-change-me",
+  geminiApiKey: process.env.GEMINI_API_KEY ?? "",
+  workoutAiModel: process.env.WORKOUT_AI_MODEL ?? "gemini-2.5-flash",
 };

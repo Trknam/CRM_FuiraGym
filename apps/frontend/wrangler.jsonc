@@ -7,6 +7,12 @@
   "vars": {
     "BACKEND_PUBLIC_URL": "https://api.fuiragym.site"
   },
+  "routes": [
+    {
+      "pattern": "fuiragym.site",
+      "custom_domain": true
+    }
+  ],
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"

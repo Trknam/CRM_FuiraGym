@@ -51,7 +51,7 @@ export function AIWorkoutPage() {
                     <div className="flex flex-wrap items-center gap-3 text-xs text-[#667085]">
                         <span>
                             <span className="font-semibold text-[#172033]">Luồng AI:</span> Vector
-                            Search → Rule Engine → Ollama Cloud → Validation → PostgreSQL.
+                            Search → Rule Engine → Gemini API → Validation → PostgreSQL.
                         </span>
                         {retrieval ? (
                             <span

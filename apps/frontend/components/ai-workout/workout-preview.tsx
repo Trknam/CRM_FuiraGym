@@ -45,7 +45,8 @@ export function WorkoutPreview({
                 <p className="text-sm font-semibold">{result.summary}</p>
                 <p className="mt-2 text-sm leading-6 text-[#667085]">{result.rationale}</p>
             </div>
-            <div className="grid gap-3">
+            <div className="max-h-[560px] overflow-y-auto pr-2 [scrollbar-width:thin]">
+                <div className="grid gap-3">
                 {plan.days.map((day) => (
                     <div key={day.id} className="rounded-xl border border-[#e8ebf2] p-4">
                         <div className="mb-3 flex items-center justify-between">
@@ -96,6 +97,7 @@ export function WorkoutPreview({
                         </div>
                     </div>
                 ))}
+                </div>
             </div>
             <div className="mt-5 rounded-xl bg-[#f7f7ff] p-4 text-sm leading-6 text-[#667085]">
                 <div className="flex items-start gap-2">
