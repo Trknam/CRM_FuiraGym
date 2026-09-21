@@ -15,6 +15,9 @@ const reports_1 = require("./reports");
 const workouts_1 = require("./workouts");
 const dashboard_1 = require("./dashboard");
 const users_1 = require("./users");
+const notifications_1 = require("./notifications");
+const audit_1 = require("./audit");
+const public_renewal_1 = require("./public-renewal");
 const prisma_1 = require("../db/prisma");
 const authorization_1 = require("../auth/authorization");
 const branches_1 = require("../api/branches");
@@ -48,4 +51,7 @@ function registerApiRoutes(app) {
     app.use("/api/workouts", workouts_1.workoutsRoutes);
     app.use("/api/dashboard", dashboard_1.dashboardRoutes);
     app.use("/api/users", users_1.usersRoutes);
+    app.use("/api/notifications", notifications_1.notificationsRoutes);
+    app.use("/api/audit", audit_1.auditRoutes);
+    app.use("/api/public/renewal", public_renewal_1.publicRenewalRoutes);
 }

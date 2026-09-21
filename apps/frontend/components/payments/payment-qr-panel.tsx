@@ -198,8 +198,8 @@ export function PaymentQrPanel({ values, paymentId, mode, onClose, onConfirmed }
                                     </div>
                                 </div>
                                 <div className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                                    Giao dịch đang <b>Chờ thanh toán</b>. Sau khi kiểm tra đã nhận tiền,
-                                    nhân viên bấm “Đã thanh toán”.
+                                    Giao dịch chỉ được ghi nhận sau khi hội viên <b>quét mã QR</b>.
+                                    Hiện tại hệ thống chưa kết nối kiểm tra tiền về ngân hàng.
                                 </div>
                             </div>
                         </div>
@@ -215,7 +215,7 @@ export function PaymentQrPanel({ values, paymentId, mode, onClose, onConfirmed }
                                 onClick={() => void confirmPayment()}
                             >
                                 <Check size={16} />
-                                {busy ? "Đang xác nhận..." : "Đã thanh toán"}
+                                {busy ? "Đang cập nhật..." : "Hội viên đã quét QR"}
                             </button>
                         </div>
                     </div>

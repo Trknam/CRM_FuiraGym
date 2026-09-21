@@ -12,6 +12,7 @@ type UserRow = {
     role: Role;
     roleLabel: string;
     isActive: boolean;
+    approvalStatus: "PENDING" | "ACTIVE" | "REJECTED";
     createdAt: string;
 };
 type Permission = { key: string; label: string };
@@ -161,6 +162,39 @@ export function AccountPermissions() {
         }
     }
 
+    async function approveUser(user: UserRow) {
+        try {
+            const response = await fetch("/api/users", {
+                method: "PATCH",
+                credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: user.id, approvalStatus: "ACTIVE" }),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.message ?? "Không thể duyệt tài khoản.");
+            await load();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Không thể duyệt tài khoản.");
+        }
+    }
+
+    async function rejectUser(user: UserRow) {
+        if (!confirm("Từ chối tài khoản " + user.fullName + "?")) return;
+        try {
+            const response = await fetch("/api/users", {
+                method: "PATCH",
+                credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: user.id, approvalStatus: "REJECTED" }),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.message ?? "Không thể từ chối tài khoản.");
+            await load();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Không thể từ chối tài khoản.");
+        }
+    }
+
     return (
         <div className="space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -231,22 +265,49 @@ export function AccountPermissions() {
                                         <td className="px-4 py-3">{user.roleLabel}</td>
                                         <td className="px-4 py-3">
                                             <span className="inline-flex items-center gap-1.5">
-                                                {user.isActive ? (
+                                                {user.approvalStatus === "PENDING" ? (
+                                                    "Chờ duyệt"
+                                                ) : user.approvalStatus === "REJECTED" ? (
+                                                    "Từ chối"
+                                                ) : user.isActive ? (
                                                     <Check size={15} />
                                                 ) : (
                                                     <X size={15} />
                                                 )}
-                                                {user.isActive ? "Đang hoạt động" : "Đã khóa"}
+                                                {user.approvalStatus === "PENDING"
+                                                    ? ""
+                                                    : user.approvalStatus === "REJECTED"
+                                                      ? ""
+                                                      : user.isActive
+                                                        ? "Đang hoạt động"
+                                                        : "Đã khóa"}
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 text-right">
-                                            <button
-                                                className="btn btn-secondary mr-2"
-                                                onClick={() => openEdit(user)}
-                                            >
-                                                Sửa
-                                            </button>
-                                            {user.isActive && (
+                                            {user.approvalStatus === "PENDING" ? (
+                                                <>
+                                                    <button
+                                                        className="btn btn-primary mr-2"
+                                                        onClick={() => void approveUser(user)}
+                                                    >
+                                                        Duyệt
+                                                    </button>
+                                                    <button
+                                                        className="btn btn-secondary"
+                                                        onClick={() => void rejectUser(user)}
+                                                    >
+                                                        Từ chối
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <button
+                                                        className="btn btn-secondary mr-2"
+                                                        onClick={() => openEdit(user)}
+                                                    >
+                                                        Sửa
+                                                    </button>
+                                                    {user.isActive && (
                                                 <button
                                                     className="btn btn-secondary"
                                                     onClick={() => void lockUser(user)}
@@ -254,6 +315,8 @@ export function AccountPermissions() {
                                                     <LockKeyhole size={15} />
                                                     Khóa
                                                 </button>
+                                                    )}
+                                                </>
                                             )}
                                         </td>
                                     </tr>

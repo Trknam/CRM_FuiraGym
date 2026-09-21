@@ -112,6 +112,10 @@ services:
       WORKOUT_EMBEDDING_HOST: http://workout-embeddings:11434
       WORKOUT_EMBEDDING_MODEL: embeddinggemma:300m-qat-q4_0
       WORKOUT_EMBEDDING_DIMENSIONS: 768
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:3000}
+      RENEWAL_SECRET: ${RENEWAL_SECRET:-fuira-gym-renewal-secret-change-me}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

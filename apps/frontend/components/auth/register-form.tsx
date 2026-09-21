@@ -9,12 +9,14 @@ export function RegisterForm() {
     const [errors, setErrors] = useState<ValidationErrors>({});
     const [formError, setFormError] = useState("");
     const [loading, setLoading] = useState(false);
+    const [success, setSuccess] = useState("");
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirm, setShowConfirm] = useState(false);
 
     async function submit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         setFormError("");
+        setSuccess("");
         const form = new FormData(event.currentTarget);
         const input = {
             fullName: String(form.get("fullName") ?? ""),
@@ -38,7 +40,7 @@ export function RegisterForm() {
                 setErrors(data.errors ?? {});
                 return;
             }
-            window.location.href = "/";
+            setSuccess(data.message ?? "Đăng ký thành công. Vui lòng chờ quản trị viên phê duyệt.");
         } catch {
             setFormError("Không thể kết nối đến máy chủ.");
         } finally {
@@ -57,6 +59,11 @@ export function RegisterForm() {
             {formError && (
                 <div className="mb-4 rounded-xl border border-[var(--danger)]/20 bg-[var(--danger-soft)] px-3 py-2.5 text-sm text-[var(--danger)]">
                     {formError}
+                </div>
+            )}
+            {success && (
+                <div className="mb-4 rounded-xl border border-emerald-500/20 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-700">
+                    {success}
                 </div>
             )}
             <form className="space-y-4" onSubmit={submit} noValidate>

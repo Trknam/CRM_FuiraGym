@@ -3,6 +3,7 @@ import { prisma } from "../db/prisma";
 import { requirePermission, getAccessibleBranchIds } from "../auth/authorization";
 import { cacheDelete, cacheGet, cacheSet } from "../cache/valkey";
 import { cacheKeys } from "../cache/keys";
+import { recordActivity } from "../services/activity";
 const methodMap: Record<string, "CASH" | "BANK_TRANSFER" | "CARD"> = {
     "Tiền mặt": "CASH",
     "Chuyển khoản": "BANK_TRANSFER",
@@ -23,7 +24,7 @@ const out = (x: any) => ({
     amount: Number(x.amount),
     method: methods[x.method as keyof typeof methods],
     status: statuses[x.status as keyof typeof statuses],
-    date: (x.paidAt ?? x.createdAt).toISOString().slice(0, 10),
+    date: x.paidAt?.toISOString().slice(0, 10) ?? "",
     paidAt: x.paidAt?.toISOString() ?? null,
     note: x.note ?? "",
 });
@@ -128,6 +129,7 @@ paymentsRoutes.post("/", async (req, res) => {
             include: { member: true },
         });
         await cacheDelete(cacheKeys.payments("all"));
+        await recordActivity({ req, action: "đã tạo giao dịch thanh toán", entity: "payment", entityId: row.id, targetName: row.member.fullName, branchId: row.branchId, details: "Số tiền: " + Number(row.amount).toLocaleString("vi-VN") + " VNĐ; trạng thái: " + statuses[row.status] });
         return res.status(201).json({ data: out(row) });
     } catch (error) {
         const s = (error as any)?.status;
@@ -152,6 +154,7 @@ paymentsRoutes.post("/:id/confirm", async (req, res) => {
             include: { member: true },
         });
         await cacheDelete(cacheKeys.payments("all"));
+        await recordActivity({ req, action: "đã xác nhận thanh toán", entity: "payment", entityId: row.id, targetName: row.member.fullName, branchId: row.branchId, details: "Số tiền: " + Number(row.amount).toLocaleString("vi-VN") + " VNĐ" });
         return res.json({ data: out(row), message: "Đã xác nhận thanh toán thành công." });
     } catch (error) {
         const s = (error as any)?.status;
@@ -184,6 +187,8 @@ paymentsRoutes.patch("/", async (req, res) => {
             include: { member: true },
         });
         await cacheDelete(cacheKeys.payments("all"));
+        const member = await prisma.member.findUnique({ where: { id: row.memberId }, select: { fullName: true } });
+        await recordActivity({ req, action: "đã cập nhật giao dịch thanh toán", entity: "payment", entityId: row.id, targetName: member?.fullName ?? null, branchId: row.branchId, details: "Số tiền: " + Number(row.amount).toLocaleString("vi-VN") + " VNĐ; trạng thái: " + statuses[row.status] });
         return res.json({ data: out(row) });
     } catch {
         return res.status(500).json({ message: "Không thể cập nhật giao dịch." });
@@ -208,6 +213,9 @@ paymentsRoutes.delete("/", async (req, res) => {
             where: { id: { in: deletedIds } },
         });
         await cacheDelete(cacheKeys.payments("all"));
+        for (const payment of existing) {
+            await recordActivity({ req, action: "đã xóa giao dịch thanh toán", entity: "payment", entityId: payment.id, targetName: (await prisma.member.findUnique({ where: { id: payment.memberId }, select: { fullName: true } }))?.fullName ?? null, branchId: payment.branchId, details: "Số tiền: " + Number(payment.amount).toLocaleString("vi-VN") + " VNĐ" });
+        }
         return res.json({ message: "Đã xóa giao dịch khỏi lịch sử.", deletedIds });
     } catch (error) {
         const s = (error as any)?.status;

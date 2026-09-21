@@ -24,6 +24,9 @@ export type Field = {
     allowEmptyOption?: boolean;
     required?: boolean;
     hiddenOnCreate?: boolean;
+    hiddenOnEdit?: boolean;
+    optionLabel?: (item: Record<string, unknown>) => string;
+    optionDescription?: (item: Record<string, unknown>) => string;
 };
 export type CrudItem = Record<string, string | number> & { id: string };
 
@@ -57,6 +60,9 @@ type Props = {
         confirmMessage?: string;
     };
     onCreate?: (values: Record<string, string | number>) => Promise<CrudItem | void>;
+    createResult?: ReactNode;
+    keepCreateModalOpen?: (values: Record<string, string | number>) => boolean;
+    onOpenCreate?: () => void;
     refreshKey?: number;
 };
 
@@ -88,18 +94,27 @@ const statusTone = (value: string) => {
     return "badge badge-neutral";
 };
 
+const formatDate = (date: Date) =>
+    `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+
 const displayValue = (field: Field | undefined, value: unknown) => {
     const text = String(value ?? "—");
     if (!field || !text || text === "—") return text || "—";
     if (field.type === "date") {
         const date = new Date(text);
-        return Number.isNaN(date.getTime()) ? text : date.toLocaleDateString("vi-VN");
+        return Number.isNaN(date.getTime()) ? text : formatDate(date);
     }
     if (field.type === "datetime-local") {
         const date = new Date(text);
-        return Number.isNaN(date.getTime())
-            ? text
-            : date.toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
+        if (Number.isNaN(date.getTime())) return text;
+
+        const day = String(date.getDate()).padStart(2, "0");
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const year = date.getFullYear();
+        const hours = String(date.getHours()).padStart(2, "0");
+        const minutes = String(date.getMinutes()).padStart(2, "0");
+
+        return `${hours}:${minutes} ${day}/${month}/${year}`;
     }
     return text;
 };
@@ -121,6 +136,9 @@ export function CrudModulePage({
     bulkConfirmMessage = removeConfirmMessage,
     rowAction,
     onCreate,
+    createResult,
+    keepCreateModalOpen,
+    onOpenCreate,
     refreshKey = 0,
 }: Props) {
     const [items, setItems] = useState<CrudItem[]>([]);
@@ -131,8 +149,9 @@ export function CrudModulePage({
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
     const [fieldOptions, setFieldOptions] = useState<
-        Record<string, { value: string; label: string }[]>
+        Record<string, { value: string; label: string; description?: string }[]>
     >({});
+    const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
     const [selectionMode, setSelectionMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
@@ -182,7 +201,12 @@ export function CrudModulePage({
                         field.key,
                         (result.data ?? []).map((item: Record<string, unknown>) => ({
                             value: String(item.id),
-                            label: String(item.name ?? item.fullName ?? item.id),
+                            label: field.optionLabel
+                                ? field.optionLabel(item)
+                                : String(item.name ?? item.fullName ?? item.id),
+                            description: field.optionDescription
+                                ? field.optionDescription(item)
+                                : undefined,
                         })),
                     ] as const;
                 }),
@@ -234,11 +258,20 @@ export function CrudModulePage({
         }
         setEditing(null);
         setError("");
+        setSelectedOptions({});
+        onOpenCreate?.();
         setOpen(true);
     };
     const openEdit = (item: CrudItem) => {
         setEditing(item);
         setError("");
+        setSelectedOptions(
+            Object.fromEntries(
+                fields
+                    .filter((field) => field.type === "select" || field.optionsEndpoint)
+                    .map((field) => [field.key, String(item[field.key] ?? "")]),
+            ),
+        );
         setOpen(true);
     };
 
@@ -254,17 +287,30 @@ export function CrudModulePage({
             const result = await response.json();
             if (!response.ok) throw new Error(result.message || "Không thể xóa dữ liệu.");
             if (Array.isArray(result.deletedIds)) {
-                setItems((current) => current.filter((item) => !result.deletedIds.includes(item.id)));
+                setItems((current) =>
+                    current.filter((item) => !result.deletedIds.includes(item.id)),
+                );
                 return;
             }
-            const updated = result.data as CrudItem | undefined;
-            setItems((current) =>
-                current.map((item) =>
-                    item.id === id
-                        ? updated ?? { ...item, status: "Tạm nghỉ" }
-                        : item,
-                ),
-            );
+            if (Array.isArray(result.data)) {
+                const updatedMap = new Map(
+                    (result.data as CrudItem[]).map((item) => [item.id, item]),
+                );
+                setItems((current) =>
+                    current.map(
+                        (item) =>
+                            updatedMap.get(item.id) ??
+                            (item.id === id ? { ...item, status: "Tạm nghỉ" } : item),
+                    ),
+                );
+            } else {
+                const updated = result.data as CrudItem | undefined;
+                setItems((current) =>
+                    current.map((item) =>
+                        item.id === id ? (updated ?? { ...item, status: "Tạm nghỉ" }) : item,
+                    ),
+                );
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : "Không thể xóa dữ liệu.");
         }
@@ -316,9 +362,10 @@ export function CrudModulePage({
             const updatedItems = (result.data ?? []) as CrudItem[];
             const updatedMap = new Map(updatedItems.map((item) => [item.id, item]));
             setItems((current) =>
-                current.map((item) =>
-                    updatedMap.get(item.id) ??
-                    (selectedIds.includes(item.id) ? { ...item, status: "Tạm nghỉ" } : item),
+                current.map(
+                    (item) =>
+                        updatedMap.get(item.id) ??
+                        (selectedIds.includes(item.id) ? { ...item, status: "Tạm nghỉ" } : item),
                 ),
             );
             exitSelectionMode();
@@ -343,8 +390,11 @@ export function CrudModulePage({
                 const saved = await onCreate(values);
                 if (saved) {
                     setItems((current) => [saved, ...current]);
+                    window.dispatchEvent(new CustomEvent("fuira:notification-created"));
                 }
-                setOpen(false);
+                if (!keepCreateModalOpen?.(values)) {
+                    setOpen(false);
+                }
                 return;
             }
             const response = await fetch(apiPath, {
@@ -360,6 +410,14 @@ export function CrudModulePage({
                     ? current.map((item) => (item.id === editing.id ? saved : item))
                     : [saved, ...current],
             );
+            if (editing && Number(saved.upgradeAmount ?? 0) > 0) {
+                window.alert(
+                    "Đổi gói thành công. Đã ghi nhận phần chênh lệch " +
+                        Number(saved.upgradeAmount).toLocaleString("vi-VN") +
+                        " VNĐ.",
+                );
+            }
+            window.dispatchEvent(new CustomEvent("fuira:notification-created"));
             setOpen(false);
         } catch (err) {
             setError(err instanceof Error ? err.message : "Không thể lưu dữ liệu.");
@@ -415,19 +473,53 @@ export function CrudModulePage({
                                     </button>
                                     {bulkMenuOpen && (
                                         <div className="absolute right-0 top-full z-20 mt-2 w-48 rounded-xl border border-[var(--border)] bg-white p-1 shadow-lg">
-                                            <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--surface-subtle)]" onClick={() => { setSelectionMode(true); setSelectedIds(filtered.map((item) => item.id)); setBulkMenuOpen(false); }}>
+                                            <button
+                                                type="button"
+                                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--surface-subtle)]"
+                                                onClick={() => {
+                                                    setSelectionMode(true);
+                                                    setSelectedIds(filtered.map((item) => item.id));
+                                                    setBulkMenuOpen(false);
+                                                }}
+                                            >
                                                 <CheckSquare size={16} /> Chọn tất cả
                                             </button>
-                                            <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--surface-subtle)]" onClick={() => { setSelectionMode(true); setSelectedIds([]); setBulkMenuOpen(false); }}>
+                                            <button
+                                                type="button"
+                                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--surface-subtle)]"
+                                                onClick={() => {
+                                                    setSelectionMode(true);
+                                                    setSelectedIds([]);
+                                                    setBulkMenuOpen(false);
+                                                }}
+                                            >
                                                 <Check size={16} /> Chọn thủ công
                                             </button>
                                             {selectionMode && selectedIds.length > 0 && (
-                                                <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50" onClick={() => { setBulkMenuOpen(false); void bulkRemove(); }}>
-                                                    {removeIcon === "trash" ? <Trash2 size={16} /> : removeIcon === "user-off" ? <UserRoundX size={16} /> : <CirclePause size={16} />} {bulkActionLabel}
+                                                <button
+                                                    type="button"
+                                                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                                                    onClick={() => {
+                                                        setBulkMenuOpen(false);
+                                                        void bulkRemove();
+                                                    }}
+                                                >
+                                                    {removeIcon === "trash" ? (
+                                                        <Trash2 size={16} />
+                                                    ) : removeIcon === "user-off" ? (
+                                                        <UserRoundX size={16} />
+                                                    ) : (
+                                                        <CirclePause size={16} />
+                                                    )}{" "}
+                                                    {bulkActionLabel}
                                                 </button>
                                             )}
                                             {selectionMode && (
-                                                <button type="button" className="w-full rounded-lg px-3 py-2 text-left text-sm text-[var(--muted)] hover:bg-[var(--surface-subtle)]" onClick={exitSelectionMode}>
+                                                <button
+                                                    type="button"
+                                                    className="w-full rounded-lg px-3 py-2 text-left text-sm text-[var(--muted)] hover:bg-[var(--surface-subtle)]"
+                                                    onClick={exitSelectionMode}
+                                                >
                                                     Thoát chọn nhiều
                                                 </button>
                                             )}
@@ -436,7 +528,9 @@ export function CrudModulePage({
                                 </div>
                             )}
                             <div className="text-xs text-[var(--muted)]">
-                                {loading ? "Đang tải..." : `${filtered.length} / ${items.length} bản ghi`}
+                                {loading
+                                    ? "Đang tải..."
+                                    : `${filtered.length} / ${items.length} bản ghi`}
                             </div>
                         </div>
                     </div>
@@ -451,7 +545,17 @@ export function CrudModulePage({
                                     <tr>
                                         {selectionMode && (
                                             <th className="w-12 px-5 py-3">
-                                                <input type="checkbox" aria-label="Chọn tất cả" checked={filtered.length > 0 && filtered.every((item) => selectedIds.includes(item.id))} onChange={toggleSelectAll} />
+                                                <input
+                                                    type="checkbox"
+                                                    aria-label="Chọn tất cả"
+                                                    checked={
+                                                        filtered.length > 0 &&
+                                                        filtered.every((item) =>
+                                                            selectedIds.includes(item.id),
+                                                        )
+                                                    }
+                                                    onChange={toggleSelectAll}
+                                                />
                                             </th>
                                         )}
                                         {columns.map((key) => (
@@ -471,7 +575,15 @@ export function CrudModulePage({
                                         <tr className="table-row" key={item.id}>
                                             {selectionMode && (
                                                 <td className="px-5 py-3">
-                                                    <input type="checkbox" aria-label={"Chọn " + displayFieldValue(item, columns[0])} checked={selectedIds.includes(item.id)} onChange={() => toggleSelection(item.id)} />
+                                                    <input
+                                                        type="checkbox"
+                                                        aria-label={
+                                                            "Chọn " +
+                                                            displayFieldValue(item, columns[0])
+                                                        }
+                                                        checked={selectedIds.includes(item.id)}
+                                                        onChange={() => toggleSelection(item.id)}
+                                                    />
                                                 </td>
                                             )}
                                             {columns.map((key, index) => {
@@ -503,9 +615,13 @@ export function CrudModulePage({
                                                                 <button
                                                                     aria-label={rowAction.label}
                                                                     className="btn btn-primary !p-2"
-                                                                    onClick={() => runRowAction(item)}
+                                                                    onClick={() =>
+                                                                        runRowAction(item)
+                                                                    }
                                                                 >
-                                                                    {rowAction.icon ?? <Check size={15} />}
+                                                                    {rowAction.icon ?? (
+                                                                        <Check size={15} />
+                                                                    )}
                                                                 </button>
                                                             )}
                                                         <button
@@ -572,57 +688,98 @@ export function CrudModulePage({
                         </div>
                         <div className="grid gap-4 sm:grid-cols-2">
                             {fields
-                                .filter((field) => !(field.hiddenOnCreate && !editing))
+                                .filter(
+                                    (field) =>
+                                        !(field.hiddenOnCreate && !editing) &&
+                                        !(field.hiddenOnEdit && editing),
+                                )
                                 .map((field) => {
-                                const options = field.optionsEndpoint
-                                    ? (fieldOptions[field.key] ?? [])
-                                    : (field.options ?? []).map((option) => ({
-                                          value: option,
-                                          label: option,
-                                      }));
-                                const currentValue = inputValue(
-                                    field,
-                                    editing?.[field.key] ??
-                                        (field.allowEmptyOption ? "" : options[0]?.value ?? ""),
-                                );
-                                return (
-                                    <label key={field.key} className="text-sm font-semibold">
-                                        {field.label}
-                                        {field.required && <span className="text-red-500"> *</span>}
-                                        {field.type === "select" || field.optionsEndpoint ? (
-                                            <select
-                                                required={field.required}
-                                                name={field.key}
-                                                defaultValue={currentValue}
-                                                className="field mt-2"
-                                            >
-                                                <option value="" disabled={!field.allowEmptyOption}>
-                                                    {field.allowEmptyOption
-                                                        ? "Không có gói"
-                                                        : `Chọn ${field.label.toLowerCase()}`}
-                                                </option>
-                                                {options.map((option) => (
-                                                    <option key={option.value} value={option.value}>
-                                                        {option.label}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                        ) : (
-                                            <input
-                                                required={field.required}
-                                                name={field.key}
-                                                type={field.type ?? "text"}
-                                                defaultValue={inputValue(
-                                                    field,
-                                                    editing?.[field.key] ?? "",
-                                                )}
-                                                className="field mt-2"
-                                            />
-                                        )}
-                                    </label>
-                                );
+                                    const options = field.optionsEndpoint
+                                        ? (fieldOptions[field.key] ?? [])
+                                        : (field.options ?? []).map((option) => ({
+                                              value: option,
+                                              label: option,
+                                              description: undefined,
+                                          }));
+                                    const currentValue = inputValue(
+                                        field,
+                                        editing?.[field.key] ??
+                                            (field.allowEmptyOption
+                                                ? ""
+                                                : (options[0]?.value ?? "")),
+                                    );
+                                    return (
+                                        <label key={field.key} className="text-sm font-semibold">
+                                            {field.label}
+                                            {field.required && (
+                                                <span className="text-red-500"> *</span>
+                                            )}
+                                            {field.type === "select" || field.optionsEndpoint ? (
+                                                <>
+                                                    <select
+                                                        required={field.required}
+                                                        name={field.key}
+                                                        defaultValue={currentValue}
+                                                        onChange={(event) =>
+                                                            setSelectedOptions((current) => ({
+                                                                ...current,
+                                                                [field.key]: event.target.value,
+                                                            }))
+                                                        }
+                                                        className="field mt-2"
+                                                    >
+                                                        <option
+                                                            value=""
+                                                            disabled={!field.allowEmptyOption}
+                                                        >
+                                                            {field.allowEmptyOption
+                                                                ? "Không có gói"
+                                                                : "Chọn " + field.label.toLowerCase()}
+                                                        </option>
+                                                        {options.map((option) => (
+                                                            <option
+                                                                key={option.value}
+                                                                value={option.value}
+                                                            >
+                                                                {option.label}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    {field.optionsEndpoint &&
+                                                        (() => {
+                                                            const selectedValue =
+                                                                selectedOptions[field.key] ?? currentValue;
+                                                            const selected = options.find(
+                                                                (option) => option.value === selectedValue,
+                                                            );
+                                                            return selected?.description ? (
+                                                                <div className="mt-2 rounded-lg bg-[var(--surface-subtle)] px-3 py-2 text-xs font-medium text-[var(--muted)]">
+                                                                    {selected.description}
+                                                                </div>
+                                                            ) : null;
+                                                        })()}
+                                                </>
+                                            ) : (
+                                                <input
+                                                    required={field.required}
+                                                    name={field.key}
+                                                    type={field.type ?? "text"}
+                                                    defaultValue={inputValue(
+                                                        field,
+                                                        editing?.[field.key] ?? "",
+                                                    )}
+                                                    className="field mt-2"
+                                                />
+                                            )}
+                                        </label>
+                                    );
                                 })}
                         </div>
+                        {!editing && createResult && (
+                            <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--surface-subtle)] p-4">
+                                {createResult}
+                            </div>
+                        )}
                         <div className="mt-6 flex justify-end gap-2">
                             <button
                                 type="button"

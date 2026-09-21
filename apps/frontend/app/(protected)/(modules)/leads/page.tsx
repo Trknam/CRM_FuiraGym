@@ -18,16 +18,23 @@ export default function LeadsPage() {
                     type: "select",
                     options: ["Mới", "Tiềm năng", "Đã chuyển đổi", "Không phù hợp"],
                 },
+                {
+                    key: "createdAt",
+                    label: "Ngày tạo",
+                    type: "datetime-local",
+                    hiddenOnCreate: true,
+                },
                 { key: "nextFollowUpAt", label: "Ngày follow-up", type: "datetime-local" },
                 { key: "note", label: "Ghi chú" },
             ]}
-            columns={["name", "phone", "email", "source", "status", "nextFollowUpAt", "note"]}
+            columns={["name", "phone", "email", "source", "status", "createdAt", "nextFollowUpAt", "note"]}
             columnLabels={{
                 name: "Họ và tên",
                 phone: "Số điện thoại",
                 email: "Email",
                 source: "Nguồn",
                 status: "Trạng thái",
+                createdAt: "Ngày tạo",
                 nextFollowUpAt: "Ngày follow-up",
                 note: "Ghi chú",
             }}

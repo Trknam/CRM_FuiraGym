@@ -8,8 +8,14 @@ const valkey_1 = require("../cache/valkey");
 const keys_1 = require("../cache/keys");
 const branches_1 = require("../api/branches");
 exports.packagesRoutes = (0, express_1.Router)();
-const label = (s) => s === "ACTIVE" ? "Đang bán" : "Tạm dừng";
-const map = (x) => ({ id: x.id, name: x.name, duration: Math.round(x.durationDays / 30), price: Number(x.price), status: label(x.status) });
+const label = (s) => (s === "ACTIVE" ? "Đang bán" : "Tạm dừng");
+const map = (x) => ({
+    id: x.id,
+    name: x.name,
+    duration: Math.round(x.durationDays / 30),
+    price: Number(x.price),
+    status: label(x.status),
+});
 exports.packagesRoutes.get("/", async (req, res) => {
     try {
         await (0, authorization_1.requirePermission)(req, "package.read");
@@ -20,7 +26,13 @@ exports.packagesRoutes.get("/", async (req, res) => {
         const cached = await (0, valkey_1.cacheGet)(key);
         if (cached)
             return res.json({ data: cached, cached: true });
-        const rows = await prisma_1.prisma.gymPackage.findMany({ where: { ...(ids === null ? {} : { branchId: { in: ids } }), ...(status === "ACTIVE" || status === "INACTIVE" ? { status } : {}) }, orderBy: { createdAt: "desc" } });
+        const rows = await prisma_1.prisma.gymPackage.findMany({
+            where: {
+                ...(ids === null ? {} : { branchId: { in: ids } }),
+                ...(status === "ACTIVE" || status === "INACTIVE" ? { status } : {}),
+            },
+            orderBy: { createdAt: "desc" },
+        });
         const data = rows.map(map);
         await (0, valkey_1.cacheSet)(key, data, 60);
         return res.json({ data, cached: false });
@@ -40,13 +52,30 @@ exports.packagesRoutes.post("/", async (req, res) => {
         const branchId = await (0, branches_1.defaultBranchId)(req);
         const duration = Number(b.duration);
         const price = Number(b.price);
-        if (!branchId || !String(b.name ?? "").trim() || !Number.isInteger(duration) || duration <= 0 || !Number.isFinite(price) || price < 0)
+        if (!branchId ||
+            !String(b.name ?? "").trim() ||
+            !Number.isInteger(duration) ||
+            duration <= 0 ||
+            !Number.isFinite(price) ||
+            price < 0)
             return res.status(400).json({ message: "Thông tin gói tập không hợp lệ." });
         if (ids !== null && !ids.includes(branchId))
             return res.status(403).json({ message: "Bạn không có quyền tại chi nhánh này." });
         const count = await prisma_1.prisma.gymPackage.count({ where: { branchId } });
-        const row = await prisma_1.prisma.gymPackage.create({ data: { branchId, code: `PKG-${String(count + 1).padStart(4, "0")}`, name: String(b.name).trim(), durationDays: duration * 30, price, status: b.status === "Tạm dừng" ? "INACTIVE" : "ACTIVE" } });
+        const row = await prisma_1.prisma.gymPackage.create({
+            data: {
+                branchId,
+                code: `PKG-${String(count + 1).padStart(4, "0")}`,
+                name: String(b.name).trim(),
+                durationDays: duration * 30,
+                price,
+                status: b.status === "Tạm dừng" ? "INACTIVE" : "ACTIVE",
+            },
+        });
         await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.packages("all", "all"));
+        await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.packages(branchId, "all"));
+        await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.packages(branchId, "ACTIVE"));
+        await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.packages(branchId, "INACTIVE"));
         return res.status(201).json({ data: map(row) });
     }
     catch (error) {
@@ -61,15 +90,32 @@ exports.packagesRoutes.patch("/", async (req, res) => {
         await (0, authorization_1.requirePermission)(req, "package.update");
         const b = req.body ?? {};
         const ids = await (0, authorization_1.getAccessibleBranchIds)(req);
-        const existing = await prisma_1.prisma.gymPackage.findFirst({ where: { id: String(b.id), ...(ids === null ? {} : { branchId: { in: ids } }) } });
+        const existing = await prisma_1.prisma.gymPackage.findFirst({
+            where: { id: String(b.id), ...(ids === null ? {} : { branchId: { in: ids } }) },
+        });
         if (!existing)
             return res.status(404).json({ message: "Không tìm thấy gói tập." });
         const duration = Number(b.duration ?? existing.durationDays / 30);
         const price = Number(b.price ?? existing.price);
-        if (!String(b.name ?? existing.name).trim() || !Number.isInteger(duration) || duration <= 0 || !Number.isFinite(price) || price < 0)
+        if (!String(b.name ?? existing.name).trim() ||
+            !Number.isInteger(duration) ||
+            duration <= 0 ||
+            !Number.isFinite(price) ||
+            price < 0)
             return res.status(400).json({ message: "Thông tin gói tập không hợp lệ." });
-        const row = await prisma_1.prisma.gymPackage.update({ where: { id: existing.id }, data: { name: String(b.name ?? existing.name).trim(), durationDays: duration * 30, price, status: b.status === "Tạm dừng" ? "INACTIVE" : "ACTIVE" } });
+        const row = await prisma_1.prisma.gymPackage.update({
+            where: { id: existing.id },
+            data: {
+                name: String(b.name ?? existing.name).trim(),
+                durationDays: duration * 30,
+                price,
+                status: b.status === "Tạm dừng" ? "INACTIVE" : "ACTIVE",
+            },
+        });
         await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.packages("all", "all"));
+        await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.packages(existing.branchId, "all"));
+        await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.packages(existing.branchId, "ACTIVE"));
+        await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.packages(existing.branchId, "INACTIVE"));
         return res.json({ data: map(row) });
     }
     catch (error) {
@@ -83,13 +129,23 @@ exports.packagesRoutes.delete("/", async (req, res) => {
     try {
         await (0, authorization_1.requirePermission)(req, "package.delete");
         const ids = await (0, authorization_1.getAccessibleBranchIds)(req);
-        const id = String(req.body?.id ?? "");
-        const existing = await prisma_1.prisma.gymPackage.findFirst({ where: { id, ...(ids === null ? {} : { branchId: { in: ids } }) } });
-        if (!existing)
+        const packageIds = Array.from(new Set(Array.isArray(req.body?.ids) ? req.body.ids.map((value) => String(value).trim()).filter(Boolean) : [String(req.body?.id ?? "").trim()].filter(Boolean)));
+        if (packageIds.length === 0)
+            return res.status(400).json({ message: "Chưa chọn gói tập." });
+        const existing = await prisma_1.prisma.gymPackage.findMany({
+            where: { id: { in: packageIds }, ...(ids === null ? {} : { branchId: { in: ids } }) },
+        });
+        if (existing.length === 0)
             return res.status(404).json({ message: "Không tìm thấy gói tập." });
-        await prisma_1.prisma.gymPackage.update({ where: { id }, data: { status: "INACTIVE" } });
+        await prisma_1.prisma.gymPackage.updateMany({ where: { id: { in: existing.map((item) => item.id) } }, data: { status: "INACTIVE" } });
+        const updated = await prisma_1.prisma.gymPackage.findMany({ where: { id: { in: existing.map((item) => item.id) } } });
         await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.packages("all", "all"));
-        return res.json({ message: "Đã tạm dừng gói tập." });
+        for (const branchId of Array.from(new Set(existing.map((item) => item.branchId)))) {
+            await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.packages(branchId, "all"));
+            await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.packages(branchId, "ACTIVE"));
+            await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.packages(branchId, "INACTIVE"));
+        }
+        return res.json({ message: "Đã tạm dừng gói tập.", data: updated.map(map) });
     }
     catch (error) {
         const s = error?.status;

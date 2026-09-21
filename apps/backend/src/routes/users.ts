@@ -3,6 +3,7 @@ import { prisma } from "../db/prisma";
 import { hashPassword } from "../auth/password";
 import { requireRole } from "../auth/authorization";
 import { ROLE_PERMISSIONS, type Permission } from "../auth/permissions";
+import { recordActivity } from "../services/activity";
 
 export const usersRoutes = Router();
 type ManagedRole = "SUPER_ADMIN" | "STAFF";
@@ -32,15 +33,15 @@ function managedRole(value: unknown): ManagedRole | null {
   return MANAGED_ROLES.includes(value as ManagedRole) ? value as ManagedRole : null;
 }
 
-function mapUser(user: { id: string; fullName: string; email: string | null; phone: string | null; role: string; isActive: boolean; createdAt: Date }) {
+function mapUser(user: { id: string; fullName: string; email: string | null; phone: string | null; role: string; isActive: boolean; approvalStatus: string; createdAt: Date }) {
   const role = managedRole(user.role) ?? "STAFF";
-  return { id: user.id, fullName: user.fullName, email: user.email, phone: user.phone, role, roleLabel: ROLE_LABELS[role], isActive: user.isActive, createdAt: user.createdAt };
+  return { id: user.id, fullName: user.fullName, email: user.email, phone: user.phone, role, roleLabel: ROLE_LABELS[role], isActive: user.isActive, approvalStatus: user.approvalStatus, createdAt: user.createdAt };
 }
 
 usersRoutes.get("/", async (req, res) => {
   try {
     await requireRole(req, "SUPER_ADMIN");
-    const users = await prisma.user.findMany({ where: { role: { in: MANAGED_ROLES } }, orderBy: [{ role: "asc" }, { createdAt: "asc" }], select: { id: true, fullName: true, email: true, phone: true, role: true, isActive: true, createdAt: true } });
+    const users = await prisma.user.findMany({ where: { role: { in: MANAGED_ROLES } }, orderBy: [{ approvalStatus: "asc" }, { role: "asc" }, { createdAt: "asc" }], select: { id: true, fullName: true, email: true, phone: true, role: true, isActive: true, approvalStatus: true, createdAt: true } });
     return res.json({ data: users.map(mapUser) });
   } catch (error) {
     const status = (error as any)?.status;
@@ -74,7 +75,8 @@ usersRoutes.post("/", async (req, res) => {
     if (!email && (!phone || phone.length < 9)) return res.status(400).json({ message: "Email hoÃŸâ•‘â•–c sÃŸâ•—Ã¦ â”€Ã¦iÃŸâ•—Ã§n thoÃŸâ•‘Ã­i khâ”œâ”¤ng hÃŸâ•—Ãºp lÃŸâ•—Ã§." });
     const duplicate = await prisma.user.findFirst({ where: { OR: [{ email: email ?? undefined }, { phone: phone ?? undefined }] }, select: { id: true } });
     if (duplicate) return res.status(409).json({ message: "Email hoÃŸâ•‘â•–c sÃŸâ•—Ã¦ â”€Ã¦iÃŸâ•—Ã§n thoÃŸâ•‘Ã­i â”€Ã¦â”œÃº tÃŸâ•—Ã´n tÃŸâ•‘Ã­i." });
-    const user = await prisma.user.create({ data: { fullName, email, phone, passwordHash: await hashPassword(password), role, isActive: true }, select: { id: true, fullName: true, email: true, phone: true, role: true, isActive: true, createdAt: true } });
+    const user = await prisma.user.create({ data: { fullName, email, phone, passwordHash: await hashPassword(password), role, isActive: true, approvalStatus: "ACTIVE" }, select: { id: true, fullName: true, email: true, phone: true, role: true, isActive: true, approvalStatus: true, createdAt: true } });
+    await recordActivity({ req, action: "đã tạo tài khoản", entity: "user", entityId: user.id, targetName: user.fullName });
     return res.status(201).json({ data: mapUser(user) });
   } catch (error) {
     const status = (error as any)?.status;
@@ -92,9 +94,17 @@ usersRoutes.patch("/", async (req, res) => {
     const existing = await prisma.user.findUnique({ where: { id }, select: { id: true, role: true, isActive: true } });
     if (!existing || !MANAGED_ROLES.includes(existing.role as ManagedRole)) return res.status(404).json({ message: "Khâ”œâ”¤ng tâ”œÂ¼m thÃŸâ•‘Ã‘y tâ”œÃ¡i khoÃŸâ•‘Ãºn." });
     const nextRole = req.body?.role === undefined ? managedRole(existing.role) : managedRole(req.body.role);
-    const data: { role?: ManagedRole; isActive?: boolean; passwordHash?: string } = {};
+    const data: { role?: ManagedRole; isActive?: boolean; approvalStatus?: "PENDING" | "ACTIVE" | "REJECTED"; passwordHash?: string } = {};
     if (nextRole) data.role = nextRole;
     if (typeof req.body?.isActive === "boolean") data.isActive = req.body.isActive;
+    if (req.body?.approvalStatus === "ACTIVE") {
+      data.approvalStatus = "ACTIVE";
+      data.isActive = true;
+    }
+    if (req.body?.approvalStatus === "REJECTED") {
+      data.approvalStatus = "REJECTED";
+      data.isActive = false;
+    }
     if (req.body?.password !== undefined) {
       const password = String(req.body.password);
       if (password.length < 8) return res.status(400).json({ message: "MÃŸâ•‘Â¡t khÃŸâ•‘âŒu phÃŸâ•‘Ãºi câ”œâ”‚ â”œÂ¡t nhÃŸâ•‘Ã‘t 8 kâ”œâ•œ tÃŸâ•—â–’." });
@@ -106,7 +116,13 @@ usersRoutes.patch("/", async (req, res) => {
       const activeAdmins = await prisma.user.count({ where: { role: "SUPER_ADMIN", isActive: true } });
       if (activeAdmins <= 1) return res.status(400).json({ message: "PhÃŸâ•‘Ãºi giÃŸâ•—Â» lÃŸâ•‘Ã­i â”œÂ¡t nhÃŸâ•‘Ã‘t mÃŸâ•—Ã–t tâ”œÃ¡i khoÃŸâ•‘Ãºn quÃŸâ•‘Ãºn trÃŸâ•—Ã¯ hoÃŸâ•‘Ã­t â”€Ã¦ÃŸâ•—Ã–ng." });
     }
-    const user = await prisma.user.update({ where: { id }, data, select: { id: true, fullName: true, email: true, phone: true, role: true, isActive: true, createdAt: true } });
+    const user = await prisma.user.update({ where: { id }, data, select: { id: true, fullName: true, email: true, phone: true, role: true, isActive: true, approvalStatus: true, createdAt: true } });
+    const approvalAction = req.body?.approvalStatus === "ACTIVE"
+      ? "đã duyệt tài khoản"
+      : req.body?.approvalStatus === "REJECTED"
+        ? "đã từ chối tài khoản"
+        : "đã cập nhật tài khoản";
+    await recordActivity({ req, action: approvalAction, entity: "user", entityId: user.id, targetName: user.fullName });
     return res.json({ data: mapUser(user) });
   } catch (error) {
     const status = (error as any)?.status;
@@ -129,6 +145,7 @@ usersRoutes.delete("/", async (req, res) => {
       if (activeAdmins <= 1) return res.status(400).json({ message: "PhÃŸâ•‘Ãºi giÃŸâ•—Â» lÃŸâ•‘Ã­i â”œÂ¡t nhÃŸâ•‘Ã‘t mÃŸâ•—Ã–t tâ”œÃ¡i khoÃŸâ•‘Ãºn quÃŸâ•‘Ãºn trÃŸâ•—Ã¯ hoÃŸâ•‘Ã­t â”€Ã¦ÃŸâ•—Ã–ng." });
     }
     await prisma.user.update({ where: { id }, data: { isActive: false } });
+    await recordActivity({ req, action: "đã khóa tài khoản", entity: "user", entityId: id });
     return res.json({ message: "â”€Ã‰â”œÃº khâ”œâ”‚a tâ”œÃ¡i khoÃŸâ•‘Ãºn." });
   } catch (error) {
     const status = (error as any)?.status;

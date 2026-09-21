@@ -21,7 +21,7 @@ export default function PackagesPage() {
             columns={["name", "duration", "price", "status"]}
             removeActionLabel="Ngừng bán"
             removeConfirmMessage="Gói tập sẽ được chuyển sang trạng thái tạm dừng và không bị xóa khỏi lịch sử. Bạn có chắc muốn tiếp tục?"
-            removeIcon="pause"
+            removeIcon="trash"
             bulkActionLabel="Tạm dừng"
             bulkConfirmMessage="Các gói tập đã chọn sẽ được chuyển sang trạng thái tạm dừng và giữ lại lịch sử. Bạn có chắc muốn tiếp tục?"
             seed={[]}

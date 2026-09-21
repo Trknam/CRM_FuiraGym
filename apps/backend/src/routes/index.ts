@@ -13,6 +13,9 @@ import { reportsRoutes } from "./reports";
 import { workoutsRoutes } from "./workouts";
 import { dashboardRoutes } from "./dashboard";
 import { usersRoutes } from "./users";
+import { notificationsRoutes } from "./notifications";
+import { auditRoutes } from "./audit";
+import { publicRenewalRoutes } from "./public-renewal";
 import { prisma } from "../db/prisma";
 import { requireUser } from "../auth/authorization";
 import { getMainBranchId } from "../api/branches";
@@ -47,4 +50,7 @@ export function registerApiRoutes(app: Express) {
   app.use("/api/workouts", workoutsRoutes);
   app.use("/api/dashboard", dashboardRoutes);
   app.use("/api/users", usersRoutes);
+  app.use("/api/notifications", notificationsRoutes);
+  app.use("/api/audit", auditRoutes);
+  app.use("/api/public/renewal", publicRenewalRoutes);
 }

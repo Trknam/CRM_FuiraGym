@@ -24,7 +24,7 @@ export default function MembersPage() {
                     key: "memberStatus",
                     label: "Trạng thái hội viên",
                     type: "select",
-                    options: ["Đang hoạt động", "Tạm nghỉ", "Bị khóa"],
+                    options: ["Đang hoạt động", "Đang chờ cập nhật", "Tạm nghỉ", "Bị khóa"],
                     required: true,
                 },
                 {
@@ -33,8 +33,20 @@ export default function MembersPage() {
                     type: "select",
                     options: ["Đang hoạt động", "Hết hạn", "Đã hủy"],
                 },
-                { key: "startDate", label: "Ngày bắt đầu", type: "date" },
-                { key: "endDate", label: "Ngày hết hạn", type: "date" },
+                {
+                    key: "startDate",
+                    label: "Ngày bắt đầu",
+                    type: "date",
+                    hiddenOnCreate: true,
+                    hiddenOnEdit: true,
+                },
+                {
+                    key: "endDate",
+                    label: "Ngày hết hạn",
+                    type: "date",
+                    hiddenOnCreate: true,
+                    hiddenOnEdit: true,
+                },
             ]}
             columns={[
                 "memberCode",

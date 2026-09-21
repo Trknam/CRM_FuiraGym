@@ -12,6 +12,7 @@ import {
   rankExercisesByVector,
   workoutVectorConfig,
 } from "../services/workout-vector-search";
+import { recordActivity } from "../services/activity";
 
 export const workoutsRoutes = Router();
 
@@ -339,6 +340,16 @@ workoutsRoutes.post("/", async (req, res) => {
           days: { orderBy: { dayNumber: "asc" }, include: { exercises: { orderBy: { sortOrder: "asc" }, include: { exercise: true } } } },
         },
       });
+    });
+
+    await recordActivity({
+      req,
+      action: "đã tạo kế hoạch tập luyện AI cho hội viên",
+      entity: "workout",
+      entityId: plan.id,
+      targetName: member.fullName,
+      branchId: member.branchId,
+      details: "Mục tiêu: " + goal + "; " + sessions + " buổi/tuần; " + duration + " phút/buổi.",
     });
 
     return res.status(201).json({

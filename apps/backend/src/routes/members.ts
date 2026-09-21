@@ -4,22 +4,35 @@ import { cacheDelete, cacheGet, cacheSet } from "../cache/valkey";
 import { cacheKeys } from "../cache/keys";
 import { requirePermission } from "../auth/authorization";
 import { defaultBranchId } from "../api/branches";
+import { recordActivity } from "../services/activity";
+import { sendMemberBrandedEmail, sendMemberPausedEmail } from "../services/email";
+import { syncMemberLifecycle } from "../services/member-lifecycle";
 
 export const membersRoutes = Router();
 
 function mapMember(member: any) {
-  const membership = member.memberships?.[0];
+  const membership = member.status === "INACTIVE" ? undefined : member.memberships?.[0];
+  const isWaitingForRenewal =
+    member.status === "ACTIVE" &&
+    membership?.status === "EXPIRED" &&
+    membership.endDate < new Date() &&
+    membership.endDate >= new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const memberLabel = member.status === "ACTIVE"
+    ? isWaitingForRenewal ? "Đang chờ cập nhật" : "Đang hoạt động"
+    : member.status === "BLOCKED" ? "Bị khóa" : "Tạm nghỉ";
   return {
     id: member.id,
     memberCode: member.memberCode,
     name: member.fullName,
     phone: member.phone,
     email: member.email ?? "",
+    dateOfBirth: member.dateOfBirth?.toISOString().slice(0, 10) ?? "",
+    address: member.address ?? "",
     packageId: membership?.packageId ?? "",
     package: membership?.package?.name ?? "Chưa có gói",
-    status: member.status === "ACTIVE" ? "Đang hoạt động" : member.status === "BLOCKED" ? "Bị khóa" : "Tạm nghỉ",
-    memberStatus: member.status === "ACTIVE" ? "Đang hoạt động" : member.status === "BLOCKED" ? "Bị khóa" : "Tạm nghỉ",
-    membershipStatus: membership?.status === "ACTIVE" ? "Đang hoạt động" : membership?.status === "EXPIRED" ? "Hết hạn" : membership?.status === "CANCELLED" ? "Đã hủy" : "",
+    status: memberLabel,
+    memberStatus: memberLabel,
+    membershipStatus: isWaitingForRenewal ? "Đang chờ cập nhật" : membership?.status === "ACTIVE" ? "Đang hoạt động" : membership?.status === "EXPIRED" ? "Hết hạn" : membership?.status === "CANCELLED" ? "Đã hủy" : "",
     startDate: membership?.startDate?.toISOString().slice(0, 10) ?? "",
     endDate: membership?.endDate?.toISOString().slice(0, 10) ?? "",
     expiry: membership?.endDate?.toISOString().slice(0, 10) ?? "",
@@ -92,6 +105,7 @@ membersRoutes.get("/", async (req, res) => {
   try {
     await requirePermission(req, "member.read");
     const branchId = await defaultBranchId(req);
+    await syncMemberLifecycle();
     await syncExpiredMemberships(branchId);
     const key = cacheKeys.members(branchId);
     const cached = await cacheGet<unknown[]>(key);
@@ -140,6 +154,28 @@ membersRoutes.post("/", async (req, res) => {
       return tx.member.findUniqueOrThrow({ where: { id: created.id }, include: { memberships: { orderBy: { endDate: "desc" }, take: 1, include: { package: true } } } });
     });
     await invalidate(branchId);
+    await recordActivity({
+      req,
+      action: "đã tạo hội viên",
+      entity: "member",
+      entityId: member.id,
+      targetName: member.fullName,
+      branchId,
+    });
+    const membership = member.memberships?.[0];
+    if (member.email) {
+      void sendMemberBrandedEmail(
+        member.email,
+        member.fullName,
+        membership?.package ? "Đăng ký gói tập thành công" : "Cảm ơn bạn đã đăng ký hội viên",
+        membership?.package
+          ? "<p>Anh/chị đã đăng ký gói <b>" + membership.package.name + "</b> thành công.</p>" +
+            "<p>Thời hạn: " + membership.startDate.toLocaleDateString("vi-VN") +
+            " - " + membership.endDate.toLocaleDateString("vi-VN") + ".</p>"
+          : "<p>Cảm ơn anh/chị đã đăng ký hội viên tại FuiraGym.</p>" +
+            "<p>Chúc anh/chị có những buổi tập hiệu quả và vui vẻ.</p>",
+      );
+    }
     return res.status(201).json({ data: mapMember(member) });
   } catch (error) {
     console.error("[members] create failed", error);
@@ -166,39 +202,108 @@ membersRoutes.patch("/", async (req, res) => {
     if (email && !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ message: "Email không hợp lệ." });
     const duplicate = await prisma.member.findFirst({ where: { phone, branchId, id: { not: id } }, select: { id: true } });
     if (duplicate) return res.status(409).json({ message: "Số điện thoại hội viên đã tồn tại." });
+    const nextMemberStatus = memberStatus(body.memberStatus, existing.status);
+    const shouldSendPausedEmail =
+      existing.status !== "INACTIVE" &&
+      nextMemberStatus === "INACTIVE" &&
+      Boolean(email);
+    let upgradeAmount = 0;
     const updated = await prisma.$transaction(async (tx) => {
-      await tx.member.update({ where: { id }, data: { fullName, phone, email, dateOfBirth: parseDate(body.dateOfBirth, existing.dateOfBirth), address: body.address === undefined ? existing.address : String(body.address).trim() || null, status: memberStatus(body.memberStatus, existing.status) } });
+      await tx.member.update({ where: { id }, data: { fullName, phone, email, dateOfBirth: parseDate(body.dateOfBirth, existing.dateOfBirth), address: body.address === undefined ? existing.address : String(body.address).trim() || null, status: nextMemberStatus } });
       const packageId = String(body.packageId ?? "").trim();
       const currentMembership = existing.memberships[0];
-      if (body.packageId !== undefined && !packageId) {
-        if (currentMembership) {
+      const isNewMembership = existing.status === "INACTIVE" && Boolean(packageId);
+      if (nextMemberStatus === "INACTIVE" && !isNewMembership) {
+        if (currentMembership && !isNewMembership) {
           await tx.membership.update({
             where: { id: currentMembership.id },
             data: { status: "CANCELLED" },
           });
         }
-      } else if (packageId && packageId !== currentMembership?.packageId) {
+      } else if (isNewMembership || (packageId && packageId !== currentMembership?.packageId)) {
         const pkg = await tx.gymPackage.findFirst({ where: { id: packageId, branchId, status: "ACTIVE" } });
         if (!pkg) throw new Error("INVALID_PACKAGE");
-        const startDate = parseDate(body.startDate, new Date()) ?? new Date();
-        const endDate = parseDate(body.endDate) ?? new Date(startDate.getTime() + pkg.durationDays * 24 * 60 * 60 * 1000);
+        if (currentMembership && !isNewMembership && Number(pkg.price) <= Number(currentMembership.price)) {
+          throw new Error("PACKAGE_DOWNGRADE_NOT_ALLOWED");
+        }
+        upgradeAmount = currentMembership && !isNewMembership
+          ? Math.max(0, Number(pkg.price) - Number(currentMembership.price))
+          : 0;
+        // Khi đổi gói lúc sửa hội viên, không cho nhập lại ngày thủ công.
+        // Giữ nguyên ngày bắt đầu hiện tại và tính lại ngày hết hạn theo thời lượng gói mới.
+        const startDate = isNewMembership ? new Date() : (currentMembership?.startDate ?? new Date());
+        const endDate = new Date(startDate.getTime() + pkg.durationDays * 24 * 60 * 60 * 1000);
         if (endDate <= startDate) throw new Error("INVALID_MEMBERSHIP_DATES");
-        if (currentMembership) await tx.membership.update({ where: { id: currentMembership.id }, data: { packageId: pkg.id, startDate, endDate, price: pkg.price, status: resolveMembershipStatus(body.membershipStatus, endDate, "ACTIVE") } });
-        else await tx.membership.create({ data: { memberId: id, packageId: pkg.id, startDate, endDate, price: pkg.price, status: resolveMembershipStatus(body.membershipStatus, endDate, "ACTIVE") } });
+        if (currentMembership && !isNewMembership) {
+          await tx.membership.update({
+            where: { id: currentMembership.id },
+            data: {
+              packageId: pkg.id,
+              startDate,
+              endDate,
+              price: pkg.price,
+              status: resolveMembershipStatus(body.membershipStatus, endDate, "ACTIVE"),
+              renewalReminderSentAt: null,
+            },
+          });
+          // Nâng cấp gói chỉ thu phần chênh lệch. Khoản đã thanh toán cho gói cũ
+          // không bị thu lại; Payment mới chỉ ghi nhận phần tiền tăng thêm.
+          if (upgradeAmount > 0) {
+            await tx.payment.create({
+              data: {
+                branchId,
+                memberId: id,
+                membershipId: currentMembership.id,
+                amount: upgradeAmount,
+                method: "BANK_TRANSFER",
+                status: "PAID",
+                paidAt: new Date(),
+                note: "UPGRADE:" + currentMembership.price + "->" + pkg.price,
+              },
+            });
+          }
+        }
+        else await tx.membership.create({ data: { memberId: id, packageId: pkg.id, startDate, endDate, price: pkg.price, status: "ACTIVE", renewalReminderSentAt: null } });
+        if (isNewMembership) {
+          await tx.member.update({ where: { id }, data: { status: "ACTIVE", lastInactivityReminderSentAt: null } });
+        }
       } else if (currentMembership) {
-        const startDate = parseDate(body.startDate, currentMembership.startDate) ?? currentMembership.startDate;
-        const endDate = parseDate(body.endDate, currentMembership.endDate) ?? currentMembership.endDate;
-        if (endDate <= startDate) throw new Error("INVALID_MEMBERSHIP_DATES");
-        await tx.membership.update({ where: { id: currentMembership.id }, data: { startDate, endDate, status: resolveMembershipStatus(body.membershipStatus, endDate, currentMembership.status) } });
+        // Không đổi gói thì giữ nguyên mốc thời gian hiện tại.
+        // Ngày bắt đầu/kết thúc không còn là trường người dùng chỉnh thủ công khi sửa.
+        await tx.membership.update({ where: { id: currentMembership.id }, data: { status: resolveMembershipStatus(body.membershipStatus, currentMembership.endDate, currentMembership.status), renewalReminderSentAt: null } });
       }
       return tx.member.findUniqueOrThrow({ where: { id }, include: { memberships: { orderBy: { endDate: "desc" }, take: 1, include: { package: true } } } });
     });
     await invalidate(branchId);
-    return res.json({ data: mapMember(updated) });
+    await recordActivity({
+      req,
+      action: "đã cập nhật hội viên",
+      entity: "member",
+      entityId: updated.id,
+      targetName: updated.fullName,
+      branchId,
+    });
+    let emailSent: boolean | null = null;
+    if (shouldSendPausedEmail) {
+      emailSent = await sendMemberPausedEmail(updated.email, updated.fullName);
+    }
+    const responseData = {
+      ...mapMember(updated),
+      upgradeAmount,
+    };
+    return res.json({
+      data: responseData,
+      emailSent,
+      message:
+        upgradeAmount > 0
+          ? "Đổi gói thành công. Số tiền chênh lệch cần thu: " + upgradeAmount.toLocaleString("vi-VN") + " VNĐ."
+          : undefined,
+    });
   } catch (error) {
     console.error("[members] update failed", error);
     if (error instanceof Error && "status" in error) return res.status(Number((error as any).status)).json({ message: (error as any).message });
     if (error instanceof Error && error.message === "INVALID_PACKAGE") return res.status(400).json({ message: "Gói tập không hợp lệ hoặc đã ngừng bán." });
+    if (error instanceof Error && error.message === "PACKAGE_DOWNGRADE_NOT_ALLOWED") return res.status(400).json({ message: "Không hỗ trợ đổi từ gói hiện tại xuống gói có giá thấp hơn hoặc bằng. Hội viên chỉ được nâng cấp lên gói đắt hơn." });
     if (error instanceof Error && error.message === "INVALID_MEMBERSHIP_DATES") return res.status(400).json({ message: "Ngày bắt đầu và ngày hết hạn không hợp lệ." });
     return res.status(500).json({ message: "Không thể cập nhật hội viên." });
   }
@@ -218,6 +323,19 @@ membersRoutes.delete("/", async (req, res) => {
       include: { memberships: { orderBy: { endDate: "desc" }, take: 1, include: { package: true } } },
     });
     await invalidate(branchId);
+    for (const item of updated) {
+      await recordActivity({
+        req,
+        action: "đã ngừng hội viên",
+        entity: "member",
+        entityId: item.id,
+        targetName: item.fullName,
+        branchId,
+      });
+      if (item.email) {
+        await sendMemberPausedEmail(item.email, item.fullName);
+      }
+    }
     return res.json({ message: "Đã ngừng hoạt động hội viên.", data: updated.map(mapMember) });
   } catch (error) {
     console.error("[members] delete failed", error);

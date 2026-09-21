@@ -7,6 +7,7 @@ const prisma_1 = require("../db/prisma");
 const authorization_1 = require("../auth/authorization");
 const workout_rules_1 = require("../services/workout-rules");
 const workout_vector_search_1 = require("../services/workout-vector-search");
+const activity_1 = require("../services/activity");
 exports.workoutsRoutes = (0, express_1.Router)();
 const OLLAMA_HOST = (process.env.OLLAMA_HOST ?? "https://ollama.com").replace(/\/$/, "");
 const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY ?? "";
@@ -299,6 +300,15 @@ exports.workoutsRoutes.post("/", async (req, res) => {
                     days: { orderBy: { dayNumber: "asc" }, include: { exercises: { orderBy: { sortOrder: "asc" }, include: { exercise: true } } } },
                 },
             });
+        });
+        await (0, activity_1.recordActivity)({
+            req,
+            action: "đã tạo kế hoạch tập luyện AI cho hội viên",
+            entity: "workout",
+            entityId: plan.id,
+            targetName: member.fullName,
+            branchId: member.branchId,
+            details: "Mục tiêu: " + goal + "; " + sessions + " buổi/tuần; " + duration + " phút/buổi.",
         });
         return res.status(201).json({
             data: {

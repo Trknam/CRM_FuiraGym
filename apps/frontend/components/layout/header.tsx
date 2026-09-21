@@ -1,5 +1,6 @@
-import { Bell, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { UserMenu } from "@/components/auth/user-menu";
+import { NotificationBell } from "@/components/layout/notification-bell";
 
 export function Header() {
     return (
@@ -18,13 +19,7 @@ export function Header() {
                         placeholder="Tìm kiếm..."
                     />
                 </div>
-                <button
-                    aria-label="Thông báo"
-                    className="relative grid h-10 w-10 place-items-center rounded-xl border border-[#e8ebf2] bg-white"
-                >
-                    <Bell size={18} />
-                    <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-red-500" />
-                </button>
+                <NotificationBell />
                 <UserMenu />
             </div>
         </header>

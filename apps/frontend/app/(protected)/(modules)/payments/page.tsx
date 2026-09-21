@@ -69,7 +69,12 @@ export default function PaymentsPage() {
                         options: ["Đã thanh toán", "Chờ thanh toán", "Đã hủy"],
                         hiddenOnCreate: true,
                     },
-                    { key: "date", label: "Ngày giao dịch", type: "date", required: true },
+                    {
+                        key: "date",
+                        label: "Ngày thanh toán",
+                        type: "date",
+                        hiddenOnCreate: true,
+                    },
                 ]}
                 columns={["member", "amount", "method", "status", "date"]}
                 removeActionLabel="Xóa giao dịch"

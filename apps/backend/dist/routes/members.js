@@ -7,20 +7,32 @@ const valkey_1 = require("../cache/valkey");
 const keys_1 = require("../cache/keys");
 const authorization_1 = require("../auth/authorization");
 const branches_1 = require("../api/branches");
+const activity_1 = require("../services/activity");
+const email_1 = require("../services/email");
+const member_lifecycle_1 = require("../services/member-lifecycle");
 exports.membersRoutes = (0, express_1.Router)();
 function mapMember(member) {
-    const membership = member.memberships?.[0];
+    const membership = member.status === "INACTIVE" ? undefined : member.memberships?.[0];
+    const isWaitingForRenewal = member.status === "ACTIVE" &&
+        membership?.status === "EXPIRED" &&
+        membership.endDate < new Date() &&
+        membership.endDate >= new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const memberLabel = member.status === "ACTIVE"
+        ? isWaitingForRenewal ? "Đang chờ cập nhật" : "Đang hoạt động"
+        : member.status === "BLOCKED" ? "Bị khóa" : "Tạm nghỉ";
     return {
         id: member.id,
         memberCode: member.memberCode,
         name: member.fullName,
         phone: member.phone,
         email: member.email ?? "",
+        dateOfBirth: member.dateOfBirth?.toISOString().slice(0, 10) ?? "",
+        address: member.address ?? "",
         packageId: membership?.packageId ?? "",
         package: membership?.package?.name ?? "Chưa có gói",
-        status: member.status === "ACTIVE" ? "Đang hoạt động" : member.status === "BLOCKED" ? "Bị khóa" : "Tạm nghỉ",
-        memberStatus: member.status === "ACTIVE" ? "Đang hoạt động" : member.status === "BLOCKED" ? "Bị khóa" : "Tạm nghỉ",
-        membershipStatus: membership?.status === "ACTIVE" ? "Đang hoạt động" : membership?.status === "EXPIRED" ? "Hết hạn" : membership?.status === "CANCELLED" ? "Đã hủy" : "",
+        status: memberLabel,
+        memberStatus: memberLabel,
+        membershipStatus: isWaitingForRenewal ? "Đang chờ cập nhật" : membership?.status === "ACTIVE" ? "Đang hoạt động" : membership?.status === "EXPIRED" ? "Hết hạn" : membership?.status === "CANCELLED" ? "Đã hủy" : "",
         startDate: membership?.startDate?.toISOString().slice(0, 10) ?? "",
         endDate: membership?.endDate?.toISOString().slice(0, 10) ?? "",
         expiry: membership?.endDate?.toISOString().slice(0, 10) ?? "",
@@ -55,10 +67,43 @@ function parseDate(value, fallback) {
 async function invalidate(branchId) {
     await (0, valkey_1.cacheDelete)(keys_1.cacheKeys.members(branchId));
 }
+async function syncExpiredMemberships(branchId) {
+    const now = new Date();
+    const [expired, restored] = await Promise.all([
+        prisma_1.prisma.membership.updateMany({
+            where: {
+                member: { branchId },
+                status: "ACTIVE",
+                endDate: { lt: now },
+            },
+            data: { status: "EXPIRED" },
+        }),
+        prisma_1.prisma.membership.updateMany({
+            where: {
+                member: { branchId },
+                status: "EXPIRED",
+                endDate: { gte: now },
+            },
+            data: { status: "ACTIVE" },
+        }),
+    ]);
+    if (expired.count > 0 || restored.count > 0) {
+        await invalidate(branchId);
+    }
+    return expired.count + restored.count;
+}
+function resolveMembershipStatus(value, endDate, fallback) {
+    const requested = membershipStatus(value, fallback);
+    if (requested === "CANCELLED")
+        return "CANCELLED";
+    return endDate < new Date() ? "EXPIRED" : "ACTIVE";
+}
 exports.membersRoutes.get("/", async (req, res) => {
     try {
         await (0, authorization_1.requirePermission)(req, "member.read");
         const branchId = await (0, branches_1.defaultBranchId)(req);
+        await (0, member_lifecycle_1.syncMemberLifecycle)();
+        await syncExpiredMemberships(branchId);
         const key = keys_1.cacheKeys.members(branchId);
         const cached = await (0, valkey_1.cacheGet)(key);
         if (cached)
@@ -108,11 +153,28 @@ exports.membersRoutes.post("/", async (req, res) => {
                 const endDate = parseDate(body.endDate) ?? new Date(startDate.getTime() + pkg.durationDays * 24 * 60 * 60 * 1000);
                 if (endDate <= startDate)
                     throw new Error("INVALID_MEMBERSHIP_DATES");
-                await tx.membership.create({ data: { memberId: created.id, packageId: pkg.id, startDate, endDate, price: pkg.price, status: membershipStatus(body.membershipStatus, "ACTIVE") } });
+                await tx.membership.create({ data: { memberId: created.id, packageId: pkg.id, startDate, endDate, price: pkg.price, status: resolveMembershipStatus(body.membershipStatus, endDate, "ACTIVE") } });
             }
             return tx.member.findUniqueOrThrow({ where: { id: created.id }, include: { memberships: { orderBy: { endDate: "desc" }, take: 1, include: { package: true } } } });
         });
         await invalidate(branchId);
+        await (0, activity_1.recordActivity)({
+            req,
+            action: "đã tạo hội viên",
+            entity: "member",
+            entityId: member.id,
+            targetName: member.fullName,
+            branchId,
+        });
+        const membership = member.memberships?.[0];
+        if (member.email) {
+            void (0, email_1.sendMemberBrandedEmail)(member.email, member.fullName, membership?.package ? "Đăng ký gói tập thành công" : "Cảm ơn bạn đã đăng ký hội viên", membership?.package
+                ? "<p>Anh/chị đã đăng ký gói <b>" + membership.package.name + "</b> thành công.</p>" +
+                    "<p>Thời hạn: " + membership.startDate.toLocaleDateString("vi-VN") +
+                    " - " + membership.endDate.toLocaleDateString("vi-VN") + ".</p>"
+                : "<p>Cảm ơn anh/chị đã đăng ký hội viên tại FuiraGym.</p>" +
+                    "<p>Chúc anh/chị có những buổi tập hiệu quả và vui vẻ.</p>");
+        }
         return res.status(201).json({ data: mapMember(member) });
     }
     catch (error) {
@@ -147,34 +209,106 @@ exports.membersRoutes.patch("/", async (req, res) => {
         const duplicate = await prisma_1.prisma.member.findFirst({ where: { phone, branchId, id: { not: id } }, select: { id: true } });
         if (duplicate)
             return res.status(409).json({ message: "Số điện thoại hội viên đã tồn tại." });
+        const nextMemberStatus = memberStatus(body.memberStatus, existing.status);
+        const shouldSendPausedEmail = existing.status !== "INACTIVE" &&
+            nextMemberStatus === "INACTIVE" &&
+            Boolean(email);
+        let upgradeAmount = 0;
         const updated = await prisma_1.prisma.$transaction(async (tx) => {
-            await tx.member.update({ where: { id }, data: { fullName, phone, email, dateOfBirth: parseDate(body.dateOfBirth, existing.dateOfBirth), address: body.address === undefined ? existing.address : String(body.address).trim() || null, status: memberStatus(body.memberStatus, existing.status) } });
+            await tx.member.update({ where: { id }, data: { fullName, phone, email, dateOfBirth: parseDate(body.dateOfBirth, existing.dateOfBirth), address: body.address === undefined ? existing.address : String(body.address).trim() || null, status: nextMemberStatus } });
             const packageId = String(body.packageId ?? "").trim();
             const currentMembership = existing.memberships[0];
-            if (packageId && packageId !== currentMembership?.packageId) {
+            const isNewMembership = existing.status === "INACTIVE" && Boolean(packageId);
+            if (nextMemberStatus === "INACTIVE" && !isNewMembership) {
+                if (currentMembership && !isNewMembership) {
+                    await tx.membership.update({
+                        where: { id: currentMembership.id },
+                        data: { status: "CANCELLED" },
+                    });
+                }
+            }
+            else if (isNewMembership || (packageId && packageId !== currentMembership?.packageId)) {
                 const pkg = await tx.gymPackage.findFirst({ where: { id: packageId, branchId, status: "ACTIVE" } });
                 if (!pkg)
                     throw new Error("INVALID_PACKAGE");
-                const startDate = parseDate(body.startDate, new Date()) ?? new Date();
-                const endDate = parseDate(body.endDate) ?? new Date(startDate.getTime() + pkg.durationDays * 24 * 60 * 60 * 1000);
+                if (currentMembership && !isNewMembership && Number(pkg.price) <= Number(currentMembership.price)) {
+                    throw new Error("PACKAGE_DOWNGRADE_NOT_ALLOWED");
+                }
+                upgradeAmount = currentMembership && !isNewMembership
+                    ? Math.max(0, Number(pkg.price) - Number(currentMembership.price))
+                    : 0;
+                // Khi đổi gói lúc sửa hội viên, không cho nhập lại ngày thủ công.
+                // Giữ nguyên ngày bắt đầu hiện tại và tính lại ngày hết hạn theo thời lượng gói mới.
+                const startDate = isNewMembership ? new Date() : (currentMembership?.startDate ?? new Date());
+                const endDate = new Date(startDate.getTime() + pkg.durationDays * 24 * 60 * 60 * 1000);
                 if (endDate <= startDate)
                     throw new Error("INVALID_MEMBERSHIP_DATES");
-                if (currentMembership)
-                    await tx.membership.update({ where: { id: currentMembership.id }, data: { packageId: pkg.id, startDate, endDate, price: pkg.price, status: membershipStatus(body.membershipStatus, "ACTIVE") } });
+                if (currentMembership && !isNewMembership) {
+                    await tx.membership.update({
+                        where: { id: currentMembership.id },
+                        data: {
+                            packageId: pkg.id,
+                            startDate,
+                            endDate,
+                            price: pkg.price,
+                            status: resolveMembershipStatus(body.membershipStatus, endDate, "ACTIVE"),
+                            renewalReminderSentAt: null,
+                        },
+                    });
+                    // Nâng cấp gói chỉ thu phần chênh lệch. Khoản đã thanh toán cho gói cũ
+                    // không bị thu lại; Payment mới chỉ ghi nhận phần tiền tăng thêm.
+                    if (upgradeAmount > 0) {
+                        await tx.payment.create({
+                            data: {
+                                branchId,
+                                memberId: id,
+                                membershipId: currentMembership.id,
+                                amount: upgradeAmount,
+                                method: "BANK_TRANSFER",
+                                status: "PAID",
+                                paidAt: new Date(),
+                                note: "UPGRADE:" + currentMembership.price + "->" + pkg.price,
+                            },
+                        });
+                    }
+                }
                 else
-                    await tx.membership.create({ data: { memberId: id, packageId: pkg.id, startDate, endDate, price: pkg.price, status: membershipStatus(body.membershipStatus, "ACTIVE") } });
+                    await tx.membership.create({ data: { memberId: id, packageId: pkg.id, startDate, endDate, price: pkg.price, status: "ACTIVE", renewalReminderSentAt: null } });
+                if (isNewMembership) {
+                    await tx.member.update({ where: { id }, data: { status: "ACTIVE", lastInactivityReminderSentAt: null } });
+                }
             }
             else if (currentMembership) {
-                const startDate = parseDate(body.startDate, currentMembership.startDate) ?? currentMembership.startDate;
-                const endDate = parseDate(body.endDate, currentMembership.endDate) ?? currentMembership.endDate;
-                if (endDate <= startDate)
-                    throw new Error("INVALID_MEMBERSHIP_DATES");
-                await tx.membership.update({ where: { id: currentMembership.id }, data: { startDate, endDate, status: membershipStatus(body.membershipStatus, currentMembership.status) } });
+                // Không đổi gói thì giữ nguyên mốc thời gian hiện tại.
+                // Ngày bắt đầu/kết thúc không còn là trường người dùng chỉnh thủ công khi sửa.
+                await tx.membership.update({ where: { id: currentMembership.id }, data: { status: resolveMembershipStatus(body.membershipStatus, currentMembership.endDate, currentMembership.status), renewalReminderSentAt: null } });
             }
             return tx.member.findUniqueOrThrow({ where: { id }, include: { memberships: { orderBy: { endDate: "desc" }, take: 1, include: { package: true } } } });
         });
         await invalidate(branchId);
-        return res.json({ data: mapMember(updated) });
+        await (0, activity_1.recordActivity)({
+            req,
+            action: "đã cập nhật hội viên",
+            entity: "member",
+            entityId: updated.id,
+            targetName: updated.fullName,
+            branchId,
+        });
+        let emailSent = null;
+        if (shouldSendPausedEmail) {
+            emailSent = await (0, email_1.sendMemberPausedEmail)(updated.email, updated.fullName);
+        }
+        const responseData = {
+            ...mapMember(updated),
+            upgradeAmount,
+        };
+        return res.json({
+            data: responseData,
+            emailSent,
+            message: upgradeAmount > 0
+                ? "Đổi gói thành công. Số tiền chênh lệch cần thu: " + upgradeAmount.toLocaleString("vi-VN") + " VNĐ."
+                : undefined,
+        });
     }
     catch (error) {
         console.error("[members] update failed", error);
@@ -182,6 +316,8 @@ exports.membersRoutes.patch("/", async (req, res) => {
             return res.status(Number(error.status)).json({ message: error.message });
         if (error instanceof Error && error.message === "INVALID_PACKAGE")
             return res.status(400).json({ message: "Gói tập không hợp lệ hoặc đã ngừng bán." });
+        if (error instanceof Error && error.message === "PACKAGE_DOWNGRADE_NOT_ALLOWED")
+            return res.status(400).json({ message: "Không hỗ trợ đổi từ gói hiện tại xuống gói có giá thấp hơn hoặc bằng. Hội viên chỉ được nâng cấp lên gói đắt hơn." });
         if (error instanceof Error && error.message === "INVALID_MEMBERSHIP_DATES")
             return res.status(400).json({ message: "Ngày bắt đầu và ngày hết hạn không hợp lệ." });
         return res.status(500).json({ message: "Không thể cập nhật hội viên." });
@@ -190,14 +326,33 @@ exports.membersRoutes.patch("/", async (req, res) => {
 exports.membersRoutes.delete("/", async (req, res) => {
     try {
         await (0, authorization_1.requirePermission)(req, "member.delete");
-        const id = String(req.body?.id ?? "").trim();
         const branchId = await (0, branches_1.defaultBranchId)(req);
-        const existing = await prisma_1.prisma.member.findFirst({ where: { id, branchId }, select: { id: true } });
-        if (!existing)
+        const ids = Array.from(new Set(Array.isArray(req.body?.ids) ? req.body.ids.map((value) => String(value).trim()).filter(Boolean) : [String(req.body?.id ?? "").trim()].filter(Boolean)));
+        if (!branchId || ids.length === 0)
+            return res.status(400).json({ message: "Chưa chọn hội viên." });
+        const existing = await prisma_1.prisma.member.findMany({ where: { id: { in: ids }, branchId }, select: { id: true } });
+        if (existing.length === 0)
             return res.status(404).json({ message: "Không tìm thấy hội viên." });
-        await prisma_1.prisma.member.update({ where: { id }, data: { status: "INACTIVE" } });
+        await prisma_1.prisma.member.updateMany({ where: { id: { in: existing.map((item) => item.id) }, branchId }, data: { status: "INACTIVE" } });
+        const updated = await prisma_1.prisma.member.findMany({
+            where: { id: { in: existing.map((item) => item.id) }, branchId },
+            include: { memberships: { orderBy: { endDate: "desc" }, take: 1, include: { package: true } } },
+        });
         await invalidate(branchId);
-        return res.json({ message: "Đã ngừng hoạt động hội viên." });
+        for (const item of updated) {
+            await (0, activity_1.recordActivity)({
+                req,
+                action: "đã ngừng hội viên",
+                entity: "member",
+                entityId: item.id,
+                targetName: item.fullName,
+                branchId,
+            });
+            if (item.email) {
+                await (0, email_1.sendMemberPausedEmail)(item.email, item.fullName);
+            }
+        }
+        return res.json({ message: "Đã ngừng hoạt động hội viên.", data: updated.map(mapMember) });
     }
     catch (error) {
         console.error("[members] delete failed", error);
